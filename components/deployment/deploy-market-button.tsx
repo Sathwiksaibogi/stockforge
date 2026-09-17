@@ -95,7 +95,7 @@ export function DeployMarketButton({
   const {
     publicKey,
     connected,
-    sendTransaction,
+    signTransaction,
   } =
     useWallet();
 
@@ -134,12 +134,13 @@ export function DeployMarketButton({
 
       if (
         !connected ||
-        !publicKey
-      ) {
+        !publicKey ||
+        !signTransaction
+        ) {
         throw new Error(
-          "Connect your Solana wallet before deploying."
+            "Connect a wallet that supports transaction signing before deploying."
         );
-      }
+        }
 
       const metadataUri =
         process.env
@@ -183,7 +184,7 @@ export function DeployMarketButton({
           walletPublicKey:
             publicKey,
 
-          sendTransaction,
+          signTransaction,
 
           calibrated,
 

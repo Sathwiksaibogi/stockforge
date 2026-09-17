@@ -1,5 +1,6 @@
 "use client";
 
+
 import type {
   WalletContextState,
 } from "@solana/wallet-adapter-react";
@@ -8,6 +9,8 @@ import {
   Connection,
   Keypair,
   PublicKey,
+  SendTransactionError,
+  Transaction,
 } from "@solana/web3.js";
 
 import {
@@ -25,7 +28,7 @@ export const DEVNET_USDC_MINT =
   );
 
 const DEVNET_GENESIS_HASH =
-  "EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
+  "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 
 export type DeploymentPhase =
   | "checking-network"
@@ -59,8 +62,8 @@ type DeployStockForgeMarketParams = {
 
   walletPublicKey: PublicKey;
 
-  sendTransaction:
-    WalletContextState["sendTransaction"];
+  signTransaction:
+  WalletSignTransaction;
 
   calibrated:
     CalibratedMeteoraCurve;
@@ -76,23 +79,137 @@ type DeployStockForgeMarketParams = {
   ) => void;
 };
 
-async function confirmSignature(
-  connection: Connection,
-  signature: string
-) {
-  const confirmation =
-    await connection.confirmTransaction(
-      signature,
+type WalletSignTransaction =
+  NonNullable<
+    WalletContextState["signTransaction"]
+  >;
+
+async function signSendAndConfirm({
+  connection,
+  transaction,
+  walletPublicKey,
+  additionalSigner,
+  signTransaction,
+}: {
+  connection: Connection;
+  transaction: Transaction;
+  walletPublicKey: PublicKey;
+  additionalSigner: Keypair;
+  signTransaction: WalletSignTransaction;
+}) {
+  /*
+   * Get the blockhash immediately before
+   * asking Phantom to sign.
+   */
+  const {
+    context,
+    value: latestBlockhash,
+  } =
+    await connection.getLatestBlockhashAndContext(
       "confirmed"
     );
 
-  if (confirmation.value.err) {
+  /*
+   * Force the transaction onto the same
+   * devnet connection StockForge verified.
+   */
+  transaction.feePayer =
+    walletPublicKey;
+
+  transaction.recentBlockhash =
+    latestBlockhash.blockhash;
+
+  /*
+   * Meteora's newly-created account must
+   * sign before Phantom signs as payer.
+   *
+   * Config TX  -> configKeypair
+   * Pool TX    -> baseMintKeypair
+   */
+  transaction.partialSign(
+    additionalSigner
+  );
+
+  /*
+   * Phantom signs only.
+   * Phantom does NOT broadcast.
+   */
+  const signedTransaction =
+    await signTransaction(
+      transaction
+    );
+
+  let signature: string;
+
+  try {
+    /*
+     * StockForge broadcasts through the
+     * exact verified devnet RPC.
+     *
+     * skipPreflight=false is intentional:
+     * if Meteora rejects our config, we
+     * want the real simulation error now.
+     */
+    signature =
+      await connection.sendRawTransaction(
+        signedTransaction.serialize(),
+        {
+          skipPreflight: false,
+          preflightCommitment:
+            "confirmed",
+          maxRetries: 5,
+          minContextSlot:
+            context.slot,
+        }
+      );
+  } catch (error) {
+    if (
+      error instanceof
+      SendTransactionError
+    ) {
+      const logs =
+        await error.getLogs(
+          connection
+        );
+
+      throw new Error(
+        [
+          `Solana preflight rejected the transaction: ${error.message}`,
+          ...(logs ?? []),
+        ].join("\n")
+      );
+    }
+
+    throw error;
+  }
+
+  /*
+   * Confirm against the EXACT blockhash
+   * lifetime used for this transaction.
+   */
+  const confirmation =
+    await connection.confirmTransaction(
+      {
+        signature,
+        blockhash:
+          latestBlockhash.blockhash,
+        lastValidBlockHeight:
+          latestBlockhash.lastValidBlockHeight,
+      },
+      "confirmed"
+    );
+
+  if (
+    confirmation.value.err
+  ) {
     throw new Error(
-      `Transaction failed: ${JSON.stringify(
+      `Transaction failed on-chain: ${JSON.stringify(
         confirmation.value.err
       )}`
     );
   }
+
+  return signature;
 }
 
 async function waitForAccount(
@@ -147,7 +264,7 @@ async function assertDevnet(
 export async function deployStockForgeMarket({
   connection,
   walletPublicKey,
-  sendTransaction,
+  signTransaction,
   calibrated,
   metadataUri,
   name =
@@ -249,31 +366,20 @@ export async function deployStockForgeMarket({
       ...calibrated.meteoraConfig,
     });
 
-  const configSignature =
-    await sendTransaction(
-      createConfigTx,
-      connection,
-      {
-        signers: [
-          configKeypair,
-        ],
-
-        skipPreflight:
-          false,
-
-        preflightCommitment:
-          "confirmed",
-      }
-    );
-
-  onPhase?.(
-    "confirming-config"
-  );
-
-  await confirmSignature(
+const configSignature =
+  await signSendAndConfirm({
     connection,
-    configSignature
-  );
+
+    transaction:
+      createConfigTx,
+
+    walletPublicKey,
+
+    additionalSigner:
+      configKeypair,
+
+    signTransaction,
+  });
 
   await waitForAccount(
     connection,
@@ -314,30 +420,19 @@ export async function deployStockForgeMarket({
     });
 
   const poolSignature =
-    await sendTransaction(
-      createPoolTx,
-      connection,
-      {
-        signers: [
-          baseMintKeypair,
-        ],
-
-        skipPreflight:
-          false,
-
-        preflightCommitment:
-          "confirmed",
-      }
-    );
-
-  onPhase?.(
-    "confirming-pool"
-  );
-
-  await confirmSignature(
+  await signSendAndConfirm({
     connection,
-    poolSignature
-  );
+
+    transaction:
+      createPoolTx,
+
+    walletPublicKey,
+
+    additionalSigner:
+      baseMintKeypair,
+
+    signTransaction,
+  });
 
   /*
    * Meteora derives the active DBC pool
