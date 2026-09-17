@@ -1,0 +1,23 @@
+{
+  "name": "StockForge TSLA Demo",
+  "symbol": "TSLA-SF",
+  "description": "StockForge hackathon demonstration token used to showcase Pyth-informed Meteora Dynamic Bonding Curve infrastructure. This demo token does not represent Tesla equity, ownership, dividends, voting rights, or any claim on securities.",
+  "attributes": [
+    {
+      "trait_type": "Infrastructure",
+      "value": "StockForge"
+    },
+    {
+      "trait_type": "Reference Market",
+      "value": "TSLA"
+    },
+    {
+      "trait_type": "Curve",
+      "value": "Meteora DBC"
+    },
+    {
+      "trait_type": "Market Data",
+      "value": "Pyth"
+    }
+  ]
+}
