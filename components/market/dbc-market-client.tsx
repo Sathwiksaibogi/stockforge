@@ -16,6 +16,11 @@ import {
   useWalletModal,
 } from "@solana/wallet-adapter-react-ui";
 
+import {
+  PublicKey,
+  type Connection,
+} from "@solana/web3.js";
+
 import Decimal from "decimal.js";
 
 import {
@@ -118,6 +123,26 @@ type CurveZones = {
   currentPositionPercent: number;
 };
 
+type WalletTokenBalances = {
+  owner: string;
+  usdc: number;
+  tslaSf: number;
+};
+
+type TradePreview = {
+  inputUsdc: number;
+  outputTokens: number;
+  currentDbcPrice: number;
+  postTradeDbcPrice: number;
+  priceImpactPercent: number;
+  currentZone: StockForgeZone;
+  postTradeZone: StockForgeZone;
+  allInExecutionPrice: number;
+  allInPremiumVsSpot: number;
+  estimatedUsdcAfter: number | null;
+  estimatedTslaAfter: number | null;
+};
+
 const Q64 =
   new Decimal(2).pow(64);
 
@@ -150,6 +175,23 @@ function formatUsd(
 
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
+    }
+  ).format(value);
+}
+
+function formatTokenAmount(
+  value: number,
+  maximumFractionDigits = 6
+) {
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
+
+  return new Intl.NumberFormat(
+    "en-US",
+    {
+      minimumFractionDigits: 0,
+      maximumFractionDigits,
     }
   ).format(value);
 }
@@ -202,6 +244,83 @@ function deriveDbcPrice(
   return sqrtPrice
     .mul(sqrtPrice)
     .toNumber();
+}
+
+async function getMintBalance({
+  connection,
+  owner,
+  mint,
+}: {
+  connection: Connection;
+  owner: PublicKey;
+  mint: string;
+}) {
+  const response =
+    await connection.getParsedTokenAccountsByOwner(
+      owner,
+      {
+        mint: new PublicKey(mint),
+      },
+      "confirmed"
+    );
+
+  return response.value.reduce(
+    (total, account) => {
+      const parsed =
+        account.account.data;
+
+      if (!("parsed" in parsed)) {
+        return total;
+      }
+
+      const amountString =
+        parsed.parsed?.info
+          ?.tokenAmount
+          ?.uiAmountString;
+
+      const amount =
+        Number(amountString ?? 0);
+
+      return Number.isFinite(amount)
+        ? total + amount
+        : total;
+    },
+    0
+  );
+}
+
+function classifyPriceZone(
+  price: number,
+  zones: Pick<
+    CurveZones,
+    | "start"
+    | "discoveryEnd"
+    | "fairValueEnd"
+    | "expansionEnd"
+  >
+): StockForgeZone {
+  if (
+    price >= zones.start &&
+    price < zones.discoveryEnd
+  ) {
+    return "discovery";
+  }
+
+  if (
+    price >= zones.discoveryEnd &&
+    price < zones.fairValueEnd
+  ) {
+    return "fairValue";
+  }
+
+  if (
+    price >= zones.fairValueEnd &&
+    price <= zones.expansionEnd
+  ) {
+    return "expansion";
+  }
+
+  return "outside";
 }
 
 function deriveCurveZones(
@@ -269,36 +388,16 @@ function deriveCurveZones(
     return null;
   }
 
-  let zone:
-    StockForgeZone;
-
-  if (
-    current >= start &&
-    current <
-      discoveryEnd
-  ) {
-    zone =
-      "discovery";
-  } else if (
-    current >=
-      discoveryEnd &&
-    current <
-      fairValueEnd
-  ) {
-    zone =
-      "fairValue";
-  } else if (
-    current >=
-      fairValueEnd &&
-    current <=
-      expansionEnd
-  ) {
-    zone =
-      "expansion";
-  } else {
-    zone =
-      "outside";
-  }
+  const zone =
+    classifyPriceZone(
+      current,
+      {
+        start,
+        discoveryEnd,
+        fairValueEnd,
+        expansionEnd,
+      }
+    );
 
   const totalRange =
     expansionEnd - start;
@@ -440,6 +539,14 @@ export function DbcMarketClient() {
       null
     );
 
+  const [
+    walletBalances,
+    setWalletBalances,
+  ] =
+    useState<WalletTokenBalances | null>(
+      null
+    );
+
   const refreshPool =
     useCallback(
       async () => {
@@ -481,6 +588,46 @@ export function DbcMarketClient() {
         }
       },
       []
+    );
+
+  const refreshWalletBalances =
+    useCallback(
+      async () => {
+        if (!publicKey || !pool) {
+          return;
+        }
+
+        const owner =
+          publicKey.toBase58();
+
+        const [
+          usdc,
+          tslaSf,
+        ] = await Promise.all([
+          getMintBalance({
+            connection,
+            owner: publicKey,
+            mint: pool.addresses.quoteMint,
+          }),
+
+          getMintBalance({
+            connection,
+            owner: publicKey,
+            mint: pool.addresses.baseMint,
+          }),
+        ]);
+
+        setWalletBalances({
+          owner,
+          usdc,
+          tslaSf,
+        });
+      },
+      [
+        connection,
+        publicKey,
+        pool,
+      ]
     );
 
   useEffect(() => {
@@ -535,6 +682,68 @@ export function DbcMarketClient() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!publicKey || !pool) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    // Capture the narrowed values before entering the async function.
+    // TypeScript then knows these cannot become null inside the closure.
+    const walletPublicKey =
+      publicKey;
+
+    const poolAddresses =
+      pool.addresses;
+
+    const owner =
+      walletPublicKey.toBase58();
+
+    async function loadWalletBalances() {
+      const [
+        usdc,
+        tslaSf,
+      ] = await Promise.all([
+        getMintBalance({
+          connection,
+          owner:
+            walletPublicKey,
+          mint:
+            poolAddresses.quoteMint,
+        }),
+
+        getMintBalance({
+          connection,
+          owner:
+            walletPublicKey,
+          mint:
+            poolAddresses.baseMint,
+        }),
+      ]);
+
+      if (!cancelled) {
+        setWalletBalances({
+          owner,
+          usdc,
+          tslaSf,
+        });
+      }
+    }
+
+    void loadWalletBalances();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    connection,
+    publicKey,
+    pool,
+  ]);
 
   const migrationPercent =
     useMemo(() => {
@@ -668,6 +877,136 @@ export function DbcMarketClient() {
       );
     }, [pool]);
 
+  const currentWalletBalances =
+    useMemo(() => {
+      if (!publicKey || !walletBalances) {
+        return null;
+      }
+
+      return walletBalances.owner ===
+        publicKey.toBase58()
+        ? walletBalances
+        : null;
+    }, [
+      publicKey,
+      walletBalances,
+    ]);
+
+  const tradePreview =
+    useMemo<TradePreview | null>(() => {
+      if (!quote || !curveZones) {
+        return null;
+      }
+
+      const inputUsdc =
+        Number(quote.amountInUi);
+
+      const outputTokens =
+        Number(quote.outputAmountUi);
+
+      const postTradeDbcPrice =
+        deriveDbcPrice(
+          quote.nextSqrtPrice
+        );
+
+      if (
+        !Number.isFinite(inputUsdc) ||
+        inputUsdc <= 0 ||
+        !Number.isFinite(outputTokens) ||
+        outputTokens <= 0 ||
+        !Number.isFinite(postTradeDbcPrice) ||
+        postTradeDbcPrice <= 0
+      ) {
+        return null;
+      }
+
+      const currentDbcPrice =
+        curveZones.current;
+
+      const priceImpactPercent =
+        (
+          (
+            postTradeDbcPrice /
+            currentDbcPrice
+          ) -
+          1
+        ) *
+        100;
+
+      const currentZone =
+        classifyPriceZone(
+          currentDbcPrice,
+          curveZones
+        );
+
+      const postTradeZone =
+        classifyPriceZone(
+          postTradeDbcPrice,
+          curveZones
+        );
+
+      const allInExecutionPrice =
+        inputUsdc /
+        outputTokens;
+
+      const allInPremiumVsSpot =
+        (
+          (
+            allInExecutionPrice /
+            currentDbcPrice
+          ) -
+          1
+        ) *
+        100;
+
+      return {
+        inputUsdc,
+        outputTokens,
+        currentDbcPrice,
+        postTradeDbcPrice,
+        priceImpactPercent,
+        currentZone,
+        postTradeZone,
+        allInExecutionPrice,
+        allInPremiumVsSpot,
+
+        estimatedUsdcAfter:
+          currentWalletBalances
+            ? currentWalletBalances.usdc -
+              inputUsdc
+            : null,
+
+        estimatedTslaAfter:
+          currentWalletBalances
+            ? currentWalletBalances.tslaSf +
+              outputTokens
+            : null,
+      };
+    }, [
+      quote,
+      curveZones,
+      currentWalletBalances,
+    ]);
+
+  const insufficientUsdc =
+    useMemo(() => {
+      if (!currentWalletBalances) {
+        return false;
+      }
+
+      const inputUsdc =
+        Number(amount);
+
+      return (
+        Number.isFinite(inputUsdc) &&
+        inputUsdc >
+          currentWalletBalances.usdc
+      );
+    }, [
+      amount,
+      currentWalletBalances,
+    ]);
+
   async function handleQuote() {
     setError(null);
     setSignature(null);
@@ -741,7 +1080,10 @@ export function DbcMarketClient() {
         result.signature
       );
 
-      await refreshPool();
+      await Promise.all([
+        refreshPool(),
+        refreshWalletBalances(),
+      ]);
     } catch (err) {
       setError(
         err instanceof Error
@@ -1128,6 +1470,33 @@ export function DbcMarketClient() {
                 </p>
               </div>
 
+              {connected &&
+              publicKey ? (
+                <div className="mb-6 grid gap-3 sm:grid-cols-2">
+                  <WalletMetric
+                    label="Wallet USDC"
+                    value={
+                      currentWalletBalances
+                        ? `${formatTokenAmount(
+                            currentWalletBalances.usdc
+                          )} USDC`
+                        : "Loading..."
+                    }
+                  />
+
+                  <WalletMetric
+                    label="Wallet TSLA-SF"
+                    value={
+                      currentWalletBalances
+                        ? `${formatTokenAmount(
+                            currentWalletBalances.tslaSf
+                          )} TSLA-SF`
+                        : "Loading..."
+                    }
+                  />
+                </div>
+              ) : null}
+
               <label className="mb-2 block text-sm text-zinc-400">
                 You pay
               </label>
@@ -1199,12 +1568,108 @@ export function DbcMarketClient() {
                 </div>
               ) : null}
 
+              {tradePreview ? (
+                <div className="mt-5 rounded-xl border border-emerald-400/15 bg-emerald-400/[0.04] p-4">
+                  <div className="mb-4">
+                    <p className="text-xs font-medium uppercase tracking-[0.16em] text-emerald-400">
+                      Trade intelligence
+                    </p>
+
+                    <p className="mt-1 text-xs leading-5 text-zinc-600">
+                      Post-trade price and zone come directly from Meteora&apos;s quoted nextSqrtPrice. All-in execution uses the full USDC spend divided by quoted output, so it also reflects fees.
+                    </p>
+                  </div>
+
+                  <div className="space-y-3">
+                    <QuoteRow
+                      label="Current DBC price"
+                      value={formatUsd(
+                        tradePreview.currentDbcPrice
+                      )}
+                    />
+
+                    <QuoteRow
+                      label="Quoted post-trade DBC price"
+                      value={formatUsd(
+                        tradePreview.postTradeDbcPrice
+                      )}
+                    />
+
+                    <QuoteRow
+                      label="Quoted price impact"
+                      value={formatSignedPercent(
+                        tradePreview.priceImpactPercent
+                      )}
+                    />
+
+                    <QuoteRow
+                      label="Current zone"
+                      value={zoneLabel(
+                        tradePreview.currentZone
+                      )}
+                    />
+
+                    <QuoteRow
+                      label="Quoted post-trade zone"
+                      value={zoneLabel(
+                        tradePreview.postTradeZone
+                      )}
+                    />
+
+                    <QuoteRow
+                      label="All-in execution price"
+                      value={formatUsd(
+                        tradePreview.allInExecutionPrice
+                      )}
+                    />
+
+                    <QuoteRow
+                      label="All-in premium vs current DBC"
+                      value={formatSignedPercent(
+                        tradePreview.allInPremiumVsSpot
+                      )}
+                    />
+
+                    <QuoteRow
+                      label="Estimated USDC after"
+                      value={
+                        tradePreview.estimatedUsdcAfter !==
+                        null
+                          ? `${formatTokenAmount(
+                              tradePreview.estimatedUsdcAfter
+                            )} USDC`
+                          : "Connect wallet"
+                      }
+                    />
+
+                    <QuoteRow
+                      label="Estimated TSLA-SF after"
+                      value={
+                        tradePreview.estimatedTslaAfter !==
+                        null
+                          ? `${formatTokenAmount(
+                              tradePreview.estimatedTslaAfter
+                            )} TSLA-SF`
+                          : "Connect wallet"
+                      }
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              {insufficientUsdc ? (
+                <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] px-4 py-3 text-sm text-amber-300">
+                  Connected wallet does not have enough devnet USDC for this trade.
+                </div>
+              ) : null}
+
               <button
                 onClick={
                   handleTradeButton
                 }
                 disabled={
                   swapping ||
+                  insufficientUsdc ||
                   (
                     connected &&
                     !quote
@@ -1215,9 +1680,11 @@ export function DbcMarketClient() {
                 {swapping
                   ? "Waiting for Phantom..."
                   : connected
-                    ? quote
-                      ? "Buy TSLA-SF"
-                      : "Get quote first"
+                    ? insufficientUsdc
+                      ? "Insufficient devnet USDC"
+                      : quote
+                        ? "Buy TSLA-SF"
+                        : "Get quote first"
                     : "Connect wallet to trade"}
               </button>
 
@@ -1419,6 +1886,26 @@ function ZoneMetric({
 
       <p className="mt-2 text-xs leading-5 text-zinc-600">
         {detail}
+      </p>
+    </div>
+  );
+}
+
+function WalletMetric({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl border border-white/[0.07] bg-black/20 p-4">
+      <p className="text-xs uppercase tracking-[0.14em] text-zinc-600">
+        {label}
+      </p>
+
+      <p className="mt-2 text-base font-medium text-white">
+        {value}
       </p>
     </div>
   );
