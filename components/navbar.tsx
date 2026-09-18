@@ -1,50 +1,82 @@
 "use client";
 
 import Link from "next/link";
-import { WalletButton } from "@/components/wallet-button";
-import { Activity } from "lucide-react";
+
+import {
+  usePathname,
+} from "next/navigation";
+
+import {
+  WalletButton,
+} from "@/components/wallet-button";
+
+const links = [
+  {
+    label: "Home",
+    href: "/",
+  },
+  {
+    label: "Create",
+    href: "/create",
+  },
+  {
+    label: "Simulate",
+    href: "/simulate",
+  },
+  {
+    label: "Market",
+    href: "/market/pool",
+  },
+];
 
 export function Navbar() {
+  const pathname =
+    usePathname();
+
   return (
-    <header className="fixed inset-x-0 top-0 z-50 border-b border-white/10 bg-[#07090c]/80 backdrop-blur-xl">
-      <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-6 lg:px-8">
-        <Link href="/" className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-emerald-400/30 bg-emerald-400/10">
-            <Activity className="h-5 w-5 text-emerald-400" />
-          </div>
-
-          <div>
-            <div className="text-lg font-semibold tracking-tight text-white">
-              StockForge
-            </div>
-            <div className="text-[10px] uppercase tracking-[0.25em] text-zinc-500">
-              Solana Markets
-            </div>
-          </div>
-        </Link>
-
-        <nav className="hidden items-center gap-8 text-sm text-zinc-400 md:flex">
+    <header className="sticky top-0 z-50 border-b border-white/10 bg-black/80 backdrop-blur-xl">
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
+        <div className="flex items-center gap-8">
           <Link
-            href="/explore"
-            className="transition hover:text-white"
+            href="/"
+            className="text-lg font-semibold tracking-tight text-white"
           >
-            Markets
+            StockForge
           </Link>
 
-          <Link
-            href="/create"
-            className="transition hover:text-white"
-          >
-            Launch
-          </Link>
+          <nav className="hidden items-center gap-6 md:flex">
+            {links.map(
+              ({
+                label,
+                href,
+              }) => {
+                const active =
+                  pathname ===
+                  href;
 
-          <Link
-            href="/dashboard"
-            className="transition hover:text-white"
-          >
-            Dashboard
-          </Link>
-        </nav>
+                return (
+                  <Link
+                    key={
+                      href
+                    }
+                    href={
+                      href
+                    }
+                    className={
+                      active
+                        ? "text-sm font-medium text-white"
+                        : "text-sm font-medium text-zinc-500 transition hover:text-white"
+                    }
+                  >
+                    {
+                      label
+                    }
+                  </Link>
+                );
+              }
+            )}
+          </nav>
+        </div>
 
         <WalletButton />
       </div>

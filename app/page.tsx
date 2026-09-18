@@ -13,11 +13,7 @@ import {
   Zap,
 } from "lucide-react";
 
-import { Navbar } from "@/components/navbar";
-
 import { LiveReferenceCard } from "@/components/market/live-reference-card";
-
-
 
 const features = [
   {
@@ -40,25 +36,25 @@ const features = [
   },
   {
     icon: ShieldCheck,
-    title: "Fair Value Guard",
+    title: "Market Zone Guard",
     description:
-      "Show investors the premium, discount and expected execution deviation before a trade.",
+      "Show investors the reference-price zone and expected execution deviation before a trade.",
   },
 ];
 
 export default function Home() {
   return (
     <main className="min-h-screen overflow-hidden bg-[#07090c] text-white">
-      <Navbar />
-
+      {/* HERO */}
       <section className="relative">
-        <div className="absolute inset-0 overflow-hidden">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
           <div className="absolute left-[-12rem] top-32 h-[32rem] w-[32rem] rounded-full bg-emerald-500/10 blur-[140px]" />
           <div className="absolute right-[-10rem] top-20 h-[30rem] w-[30rem] rounded-full bg-blue-500/10 blur-[140px]" />
         </div>
 
-        <div className="relative mx-auto grid min-h-[850px] max-w-7xl items-center gap-16 px-6 pb-20 pt-36 lg:grid-cols-[1.1fr_0.9fr] lg:px-8">
-          <div>
+        <div className="relative mx-auto grid max-w-7xl gap-14 px-6 pb-20 pt-12 sm:pt-14 lg:grid-cols-[1.1fr_0.9fr] lg:gap-16 lg:px-8 lg:pb-24 lg:pt-16">
+          {/* LEFT */}
+          <div className="self-center">
             <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/[0.07] px-4 py-2 text-sm text-emerald-300">
               <Sparkles className="h-4 w-4" />
               Market-aware liquidity infrastructure
@@ -88,14 +84,15 @@ export default function Home() {
               </Link>
 
               <Link
-                href="/explore"
+                href="/market/pool"
                 className="inline-flex h-13 items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-6 font-medium text-zinc-200 transition hover:bg-white/[0.07]"
               >
-                Explore markets
+                View live market
+                <Activity className="h-4 w-4" />
               </Link>
             </div>
 
-            <div className="mt-14 flex flex-wrap gap-x-8 gap-y-4 text-sm text-zinc-500">
+            <div className="mt-12 flex flex-wrap gap-x-8 gap-y-4 text-sm text-zinc-500">
               <div className="flex items-center gap-2">
                 <Zap className="h-4 w-4 text-emerald-400" />
                 Powered by Solana
@@ -113,11 +110,14 @@ export default function Home() {
             </div>
           </div>
 
-          <LiveReferenceCard />
-
+          {/* LIVE PYTH CARD */}
+          <div className="self-center">
+            <LiveReferenceCard />
+          </div>
         </div>
       </section>
 
+      {/* PROBLEM */}
       <section className="border-y border-white/[0.06] bg-white/[0.015]">
         <div className="mx-auto max-w-7xl px-6 py-20 lg:px-8">
           <div className="max-w-3xl">
@@ -154,9 +154,7 @@ export default function Home() {
                     <Icon className="h-5 w-5 text-emerald-400" />
                   </div>
 
-                  <h3 className="mt-5 font-medium">
-                    {feature.title}
-                  </h3>
+                  <h3 className="mt-5 font-medium">{feature.title}</h3>
 
                   <p className="mt-3 text-sm leading-6 text-zinc-500">
                     {feature.description}
@@ -168,6 +166,7 @@ export default function Home() {
         </div>
       </section>
 
+      {/* ISSUER CTA */}
       <section className="mx-auto max-w-7xl px-6 py-24 lg:px-8">
         <div className="overflow-hidden rounded-[30px] border border-white/10 bg-gradient-to-br from-emerald-400/[0.08] via-[#0d1014] to-blue-400/[0.06] px-8 py-14 sm:px-14">
           <div className="grid items-center gap-10 lg:grid-cols-[1fr_auto]">
@@ -198,15 +197,14 @@ export default function Home() {
         </div>
       </section>
 
+      {/* FOOTER */}
       <footer className="border-t border-white/[0.06]">
         <div className="mx-auto flex max-w-7xl flex-col justify-between gap-4 px-6 py-8 text-xs text-zinc-600 sm:flex-row lg:px-8">
           <span>
             StockForge — market-aware tokenized equity infrastructure.
           </span>
 
-          <span>
-            Built on Solana · Meteora · Pyth
-          </span>
+          <span>Built on Solana · Meteora · Pyth</span>
         </div>
       </footer>
     </main>

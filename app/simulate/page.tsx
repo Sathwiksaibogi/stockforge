@@ -11,7 +11,7 @@ export default function SimulatePage() {
     <Suspense
       fallback={
         <main className="min-h-screen bg-[#07090c] text-white">
-          <div className="mx-auto max-w-7xl px-6 pt-40 text-sm text-zinc-500">
+          <div className="mx-auto max-w-7xl px-6 pt-12 text-sm text-zinc-500 lg:px-8">
             Loading StockForge simulation...
           </div>
         </main>

@@ -1,38 +1,41 @@
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import type {
+  Metadata,
+} from "next";
 
 import "./globals.css";
+
 import "@solana/wallet-adapter-react-ui/styles.css";
 
-import { Providers } from "./providers";
+import {
+  Providers,
+} from "@/app/providers";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
+import {
+  Navbar,
+} from "@/components/navbar";
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+export const metadata:
+  Metadata = {
+  title: "StockForge",
 
-export const metadata: Metadata = {
-  title: "StockForge | Market-Aware Tokenized Equity Infrastructure",
   description:
-    "Market-aware bonding curve infrastructure for tokenized equities on Solana.",
+    "Pyth-powered equity market intelligence and Meteora Dynamic Bonding Curve infrastructure.",
 };
 
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode;
+  children:
+    React.ReactNode;
 }>) {
   return (
-    <html lang="en" data-scroll-behavior="smooth">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        <Providers>{children}</Providers>
+    <html lang="en">
+      <body>
+        <Providers>
+          <Navbar />
+
+          {children}
+        </Providers>
       </body>
     </html>
   );

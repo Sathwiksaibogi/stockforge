@@ -16,7 +16,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 
-import { Navbar } from "@/components/navbar";
+
 
 
 import {
@@ -249,9 +249,9 @@ export default function CreateMarketPage() {
 
   return (
     <main className="min-h-screen bg-[#07090c] text-white">
-      <Navbar />
+      
 
-      <div className="mx-auto max-w-7xl px-6 pb-24 pt-36 lg:px-8">
+      <div className="mx-auto max-w-7xl px-6 pb-24 pt-12 lg:px-8">
         <div className="max-w-3xl">
           <div className="flex items-center gap-2 text-sm font-medium uppercase tracking-[0.18em] text-emerald-400">
             <Activity className="h-4 w-4" />

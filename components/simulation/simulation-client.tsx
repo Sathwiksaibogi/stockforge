@@ -28,9 +28,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 
-import {
-  Navbar,
-} from "@/components/navbar";
+
 
 import {
   usePythPrice,
@@ -104,8 +102,6 @@ function validRisk(
 export function SimulationClient() {
   const searchParams =
     useSearchParams();
-
-  
 
   const snapshot =
     useMemo(() => {
@@ -309,9 +305,7 @@ export function SimulationClient() {
   if (!snapshot) {
     return (
       <main className="min-h-screen bg-[#07090c] text-white">
-        <Navbar />
-
-        <div className="mx-auto max-w-3xl px-6 pt-40">
+        <div className="mx-auto max-w-3xl px-6 pt-12 lg:px-8">
           <div className="rounded-2xl border border-amber-400/20 bg-amber-400/[0.05] p-8">
             <AlertTriangle className="h-6 w-6 text-amber-300" />
 
@@ -342,9 +336,7 @@ export function SimulationClient() {
 
   return (
     <main className="min-h-screen bg-[#07090c] text-white">
-      <Navbar />
-
-      <div className="mx-auto max-w-7xl px-6 pb-24 pt-36 lg:px-8">
+      <div className="mx-auto max-w-7xl px-6 pb-24 pt-12 lg:px-8">
         <Link
           href="/create"
           className="inline-flex items-center gap-2 text-sm text-zinc-500 transition hover:text-white"
@@ -602,7 +594,7 @@ export function SimulationClient() {
                   <QuotePanel
                     scenario={scenario}
                     snapshot={snapshot}
-                    />
+                  />
                 ) : (
                   <div className="flex min-h-[400px] items-center justify-center text-sm text-zinc-600">
                     Select a scenario.
@@ -813,25 +805,25 @@ function QuotePanel({
       </div>
 
       <DeployMarketButton
-            referencePrice={
-                snapshot.referencePrice
-            }
-            annualizedVolatility={
-                snapshot.annualizedVolatility
-            }
-            targetRaiseUsd={
-                snapshot.targetRaiseUsd
-            }
-            graduationUsd={
-                snapshot.graduationUsd
-            }
-            totalSupply={
-                snapshot.totalSupply
-            }
-            riskProfile={
-                snapshot.riskProfile
-            }
-            />
+        referencePrice={
+          snapshot.referencePrice
+        }
+        annualizedVolatility={
+          snapshot.annualizedVolatility
+        }
+        targetRaiseUsd={
+          snapshot.targetRaiseUsd
+        }
+        graduationUsd={
+          snapshot.graduationUsd
+        }
+        totalSupply={
+          snapshot.totalSupply
+        }
+        riskProfile={
+          snapshot.riskProfile
+        }
+      />
     </>
   );
 }
