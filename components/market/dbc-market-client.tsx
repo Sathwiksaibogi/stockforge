@@ -19,11 +19,24 @@ import {
 import Decimal from "decimal.js";
 
 import {
+  Activity,
+  ArrowDownRight,
+  ArrowUpRight,
+  BarChart3,
+  CircleDollarSign,
+  Radio,
+} from "lucide-react";
+
+import {
   executeStockForgeBuy,
   getStockForgeBuyQuote,
   STOCKFORGE_DEMO_POOL,
   type StockForgeBuyQuote,
 } from "@/lib/meteora/trade-stockforge";
+
+import {
+  usePythPrice,
+} from "@/hooks/use-pyth-price";
 
 type PoolResponse = {
   network: string;
@@ -49,7 +62,64 @@ type PoolResponse = {
     baseFeeNumerator: string;
     migrationQuoteThresholdRaw: string;
   };
+
+  raw: {
+    config: {
+      sqrtStartPrice: string;
+      migrationSqrtPrice: string;
+
+      curve: Array<{
+        sqrtPrice: string;
+        liquidity: string;
+      }>;
+    };
+  };
 };
+
+type MarketIntelligence = {
+  dbcPrice: number;
+
+  referencePrice:
+    | number
+    | null;
+
+  premiumPercent:
+    | number
+    | null;
+
+  differenceUsd:
+    | number
+    | null;
+
+  relationship:
+    | "below"
+    | "near"
+    | "above"
+    | "unknown";
+};
+
+type StockForgeZone =
+  | "discovery"
+  | "fairValue"
+  | "expansion"
+  | "outside";
+
+type CurveZones = {
+  start: number;
+  discoveryEnd: number;
+  fairValueEnd: number;
+  expansionEnd: number;
+  current: number;
+  zone: StockForgeZone;
+
+  discoveryWidthPercent: number;
+  fairValueWidthPercent: number;
+  expansionWidthPercent: number;
+  currentPositionPercent: number;
+};
+
+const Q64 =
+  new Decimal(2).pow(64);
 
 function formatRaw(
   raw: string,
@@ -65,6 +135,42 @@ function formatRaw(
     .toString();
 }
 
+function formatUsd(
+  value: number
+) {
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
+
+  return new Intl.NumberFormat(
+    "en-US",
+    {
+      style: "currency",
+      currency: "USD",
+
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }
+  ).format(value);
+}
+
+function formatSignedPercent(
+  value: number
+) {
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
+
+  const sign =
+    value > 0
+      ? "+"
+      : "";
+
+  return `${sign}${value.toFixed(
+    2
+  )}%`;
+}
+
 function truncateAddress(
   value: string
 ) {
@@ -72,6 +178,188 @@ function truncateAddress(
     0,
     6
   )}...${value.slice(-6)}`;
+}
+
+function deriveDbcPrice(
+  sqrtPriceRaw: string
+) {
+  /*
+   * Meteora DBC stores sqrt(price)
+   * in Q64.64 fixed-point format.
+   *
+   * TSLA-SF and Devnet USDC both
+   * use 6 decimals, so no decimal
+   * adjustment is required here.
+   *
+   * price =
+   * (sqrtPrice / 2^64)^2
+   */
+  const sqrtPrice =
+    new Decimal(
+      sqrtPriceRaw
+    ).div(Q64);
+
+  return sqrtPrice
+    .mul(sqrtPrice)
+    .toNumber();
+}
+
+function deriveCurveZones(
+  pool: PoolResponse
+): CurveZones | null {
+  const activeCurvePoints =
+    pool.raw.config.curve.filter(
+      (point) =>
+        point.sqrtPrice !== "0"
+    );
+
+  if (
+    activeCurvePoints.length <
+    3
+  ) {
+    return null;
+  }
+
+  const start =
+    deriveDbcPrice(
+      pool.raw.config
+        .sqrtStartPrice
+    );
+
+  const discoveryEnd =
+    deriveDbcPrice(
+      activeCurvePoints[0]
+        .sqrtPrice
+    );
+
+  const fairValueEnd =
+    deriveDbcPrice(
+      activeCurvePoints[1]
+        .sqrtPrice
+    );
+
+  const expansionEnd =
+    deriveDbcPrice(
+      activeCurvePoints[2]
+        .sqrtPrice
+    );
+
+  const current =
+    deriveDbcPrice(
+      pool.market.sqrtPrice
+    );
+
+  if (
+    ![
+      start,
+      discoveryEnd,
+      fairValueEnd,
+      expansionEnd,
+      current,
+    ].every(Number.isFinite) ||
+    !(
+      start <
+        discoveryEnd &&
+      discoveryEnd <
+        fairValueEnd &&
+      fairValueEnd <=
+        expansionEnd
+    )
+  ) {
+    return null;
+  }
+
+  let zone:
+    StockForgeZone;
+
+  if (
+    current >= start &&
+    current <
+      discoveryEnd
+  ) {
+    zone =
+      "discovery";
+  } else if (
+    current >=
+      discoveryEnd &&
+    current <
+      fairValueEnd
+  ) {
+    zone =
+      "fairValue";
+  } else if (
+    current >=
+      fairValueEnd &&
+    current <=
+      expansionEnd
+  ) {
+    zone =
+      "expansion";
+  } else {
+    zone =
+      "outside";
+  }
+
+  const totalRange =
+    expansionEnd - start;
+
+  const discoveryWidthPercent =
+    (
+      (
+        discoveryEnd -
+        start
+      ) /
+      totalRange
+    ) *
+    100;
+
+  const fairValueWidthPercent =
+    (
+      (
+        fairValueEnd -
+        discoveryEnd
+      ) /
+      totalRange
+    ) *
+    100;
+
+  const expansionWidthPercent =
+    Math.max(
+      0,
+      100 -
+        discoveryWidthPercent -
+        fairValueWidthPercent
+    );
+
+  const currentPositionPercent =
+    Math.min(
+      100,
+      Math.max(
+        0,
+        (
+          (
+            current -
+            start
+          ) /
+          totalRange
+        ) *
+          100
+      )
+    );
+
+  return {
+    start,
+    discoveryEnd,
+    fairValueEnd,
+    expansionEnd,
+    current,
+    zone,
+
+    discoveryWidthPercent,
+    fairValueWidthPercent,
+    expansionWidthPercent,
+    currentPositionPercent,
+  };
 }
 
 export function DbcMarketClient() {
@@ -88,6 +376,13 @@ export function DbcMarketClient() {
   const {
     setVisible,
   } = useWalletModal();
+
+  const {
+    data: livePrice,
+  } =
+    usePythPrice(
+      "TSLA"
+    );
 
   const [
     amount,
@@ -273,6 +568,106 @@ export function DbcMarketClient() {
         .toString();
     }, [pool]);
 
+  const intelligence =
+    useMemo<
+      MarketIntelligence | null
+    >(() => {
+      if (!pool) {
+        return null;
+      }
+
+      const dbcPrice =
+        deriveDbcPrice(
+          pool.market.sqrtPrice
+        );
+
+      const referencePrice =
+        livePrice?.price ??
+        null;
+
+      if (
+        referencePrice === null ||
+        !Number.isFinite(
+          referencePrice
+        ) ||
+        referencePrice <= 0
+      ) {
+        return {
+          dbcPrice,
+
+          referencePrice:
+            null,
+
+          premiumPercent:
+            null,
+
+          differenceUsd:
+            null,
+
+          relationship:
+            "unknown",
+        };
+      }
+
+      const differenceUsd =
+        dbcPrice -
+        referencePrice;
+
+      const premiumPercent =
+        (
+          differenceUsd /
+          referencePrice
+        ) *
+        100;
+
+      let relationship:
+        MarketIntelligence["relationship"];
+
+      if (
+        Math.abs(
+          premiumPercent
+        ) <= 2
+      ) {
+        relationship =
+          "near";
+      } else if (
+        premiumPercent <
+        0
+      ) {
+        relationship =
+          "below";
+      } else {
+        relationship =
+          "above";
+      }
+
+      return {
+        dbcPrice,
+
+        referencePrice,
+
+        premiumPercent,
+
+        differenceUsd,
+
+        relationship,
+      };
+    }, [
+      pool,
+      livePrice,
+    ]);
+
+  const curveZones =
+    useMemo(() => {
+      if (!pool) {
+        return null;
+      }
+
+      return deriveCurveZones(
+        pool
+      );
+    }, [pool]);
+
   async function handleQuote() {
     setError(null);
     setSignature(null);
@@ -368,30 +763,31 @@ export function DbcMarketClient() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-12">
-      <div className="mb-10">
-        <div className="mb-3 flex items-center gap-3">
+    <div className="mx-auto max-w-7xl px-6 pb-24 pt-12 lg:px-8">
+      {/* MARKET HEADER */}
+      <div className="mb-12">
+        <div className="mb-4 flex flex-wrap items-center gap-3">
           <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
             DEVNET · LIVE DBC
           </span>
 
           {pool?.market.hasSwap ===
           0 ? (
-            <span className="text-xs text-zinc-500">
+            <span className="text-sm text-zinc-500">
               No trades yet
             </span>
           ) : (
-            <span className="text-xs text-emerald-400">
+            <span className="text-sm text-emerald-400">
               Trading active
             </span>
           )}
         </div>
 
-        <h1 className="text-4xl font-semibold tracking-tight text-white">
+        <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
           TSLA-SF Market
         </h1>
 
-        <p className="mt-3 max-w-3xl text-zinc-400">
+        <p className="mt-4 max-w-3xl text-lg text-zinc-400">
           Real StockForge Meteora
           Dynamic Bonding Curve on
           Solana devnet.
@@ -408,7 +804,281 @@ export function DbcMarketClient() {
 
       {pool ? (
         <>
-          <div className="grid gap-4 md:grid-cols-4">
+          {/* MARKET INTELLIGENCE */}
+          {intelligence ? (
+            <section className="mb-6 overflow-hidden rounded-[26px] border border-white/[0.08] bg-[#0d1014]">
+              <div className="flex flex-col gap-4 border-b border-white/[0.06] px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-medium text-emerald-400">
+                    <BarChart3 className="h-4 w-4" />
+
+                    Market intelligence
+                  </div>
+
+                  <p className="mt-1 text-sm text-zinc-500">
+                    Live Pyth reference
+                    compared with the
+                    current on-chain
+                    Meteora DBC price.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/[0.07] px-3 py-1.5 text-xs text-emerald-300">
+                    <Radio className="h-3.5 w-3.5" />
+
+                    PYTH LIVE
+                  </span>
+
+                  <span className="rounded-full border border-purple-400/20 bg-purple-400/[0.07] px-3 py-1.5 text-xs text-purple-300">
+                    METEORA DBC
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid gap-px bg-white/[0.06] sm:grid-cols-2 xl:grid-cols-4">
+                <IntelligenceMetric
+                  label="Pyth reference"
+                  value={
+                    intelligence
+                      .referencePrice !==
+                    null
+                      ? formatUsd(
+                          intelligence
+                            .referencePrice
+                        )
+                      : "Loading..."
+                  }
+                  detail={
+                    livePrice
+                      ?.marketSession
+                      ? `${livePrice.marketSession} session`
+                      : "External equity reference"
+                  }
+                />
+
+                <IntelligenceMetric
+                  label="DBC curve price"
+                  value={formatUsd(
+                    intelligence.dbcPrice
+                  )}
+                  detail="Derived from on-chain sqrtPrice"
+                />
+
+                <IntelligenceMetric
+                  label="Premium / discount"
+                  value={
+                    intelligence
+                      .premiumPercent !==
+                    null
+                      ? formatSignedPercent(
+                          intelligence
+                            .premiumPercent
+                        )
+                      : "—"
+                  }
+                  detail={
+                    intelligence
+                      .differenceUsd !==
+                    null
+                      ? `${formatUsd(
+                          Math.abs(
+                            intelligence
+                              .differenceUsd
+                          )
+                        )} ${
+                          intelligence
+                            .differenceUsd <
+                          0
+                            ? "below"
+                            : "above"
+                        } Pyth`
+                      : "Waiting for Pyth"
+                  }
+                  tone={
+                    intelligence.relationship
+                  }
+                />
+
+                <IntelligenceMetric
+                  label="Reference relationship"
+                  value={
+                    intelligence.relationship ===
+                    "below"
+                      ? "Below reference"
+                      : intelligence.relationship ===
+                          "above"
+                        ? "Above reference"
+                        : intelligence.relationship ===
+                            "near"
+                          ? "Near reference"
+                          : "Loading..."
+                  }
+                  detail={
+                    intelligence.relationship ===
+                    "below"
+                      ? "DBC trades below the external reference"
+                      : intelligence.relationship ===
+                          "above"
+                        ? "DBC trades above the external reference"
+                        : intelligence.relationship ===
+                            "near"
+                          ? "DBC is within ±2% of Pyth"
+                          : "Awaiting comparison"
+                  }
+                  tone={
+                    intelligence.relationship
+                  }
+                />
+              </div>
+
+              <div className="border-t border-white/[0.06] px-6 py-4 text-xs leading-5 text-zinc-600">
+                DBC price is derived
+                directly from Meteora&apos;s
+                on-chain Q64.64
+                sqrt-price state. It is
+                not inferred from the
+                reserve ratio.
+              </div>
+            </section>
+          ) : null}
+
+          {/* STOCKFORGE MARKET ZONE */}
+          {curveZones ? (
+            <section className="mb-6 rounded-[26px] border border-white/[0.08] bg-[#0d1014] p-6 sm:p-8">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium uppercase tracking-[0.18em] text-emerald-400">
+                    StockForge Market Zone
+                  </p>
+
+                  <h2 className="mt-3 text-3xl font-semibold text-white">
+                    {zoneLabel(
+                      curveZones.zone
+                    )}
+                  </h2>
+
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">
+                    Classified from the
+                    actual Meteora curve
+                    boundaries stored in
+                    this deployed DBC
+                    configuration.
+                  </p>
+                </div>
+
+                <div className="rounded-full border border-emerald-400/20 bg-emerald-400/[0.07] px-4 py-2 text-sm font-medium text-emerald-300">
+                  Current{" "}
+                  {formatUsd(
+                    curveZones.current
+                  )}
+                </div>
+              </div>
+
+              <div className="mt-7 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <ZoneMetric
+                  label="Curve start"
+                  value={formatUsd(
+                    curveZones.start
+                  )}
+                  detail="Beginning of price discovery"
+                />
+
+                <ZoneMetric
+                  label="Discovery ends"
+                  value={formatUsd(
+                    curveZones.discoveryEnd
+                  )}
+                  detail="Fair Value zone begins"
+                />
+
+                <ZoneMetric
+                  label="Fair Value ends"
+                  value={formatUsd(
+                    curveZones.fairValueEnd
+                  )}
+                  detail="Expansion zone begins"
+                />
+
+                <ZoneMetric
+                  label="Migration end"
+                  value={formatUsd(
+                    curveZones.expansionEnd
+                  )}
+                  detail="Final deployed DBC boundary"
+                />
+              </div>
+
+              <div className="mt-7">
+                <div className="relative h-3 overflow-hidden rounded-full bg-white/[0.05]">
+                  <div
+                    className="absolute inset-y-0 left-0 bg-amber-400/40"
+                    style={{
+                      width: `${curveZones.discoveryWidthPercent}%`,
+                    }}
+                  />
+
+                  <div
+                    className="absolute inset-y-0 bg-emerald-400/40"
+                    style={{
+                      left: `${curveZones.discoveryWidthPercent}%`,
+                      width: `${curveZones.fairValueWidthPercent}%`,
+                    }}
+                  />
+
+                  <div
+                    className="absolute inset-y-0 right-0 bg-blue-400/40"
+                    style={{
+                      width: `${curveZones.expansionWidthPercent}%`,
+                    }}
+                  />
+
+                  <div
+                    className="absolute top-1/2 h-5 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_0_3px_rgba(255,255,255,0.12)]"
+                    style={{
+                      left: `${curveZones.currentPositionPercent}%`,
+                    }}
+                    title={`Current DBC price ${formatUsd(
+                      curveZones.current
+                    )}`}
+                  />
+                </div>
+
+                <div
+                  className="mt-3 grid text-xs"
+                  style={{
+                    gridTemplateColumns: `${curveZones.discoveryWidthPercent}fr ${curveZones.fairValueWidthPercent}fr ${curveZones.expansionWidthPercent}fr`,
+                  }}
+                >
+                  <span className="text-amber-300">
+                    Discovery
+                  </span>
+
+                  <span className="text-center text-emerald-300">
+                    Fair Value
+                  </span>
+
+                  <span className="text-right text-blue-300">
+                    Expansion
+                  </span>
+                </div>
+
+                <p className="mt-4 text-xs leading-5 text-zinc-600">
+                  Segment widths and
+                  the white marker are
+                  derived from the
+                  deployed price
+                  boundaries. Current
+                  position is based on
+                  Meteora&apos;s live
+                  on-chain sqrtPrice.
+                </p>
+              </div>
+            </section>
+          ) : null}
+
+          {/* MARKET STATE */}
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <Metric
               label="TSLA-SF reserve"
               value={`${formatRaw(
@@ -442,14 +1112,15 @@ export function DbcMarketClient() {
             />
           </div>
 
-          <div className="mt-6 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+          {/* TRADE + ON-CHAIN */}
+          <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-[26px] border border-white/[0.08] bg-[#0d1014] p-6 sm:p-8">
               <div className="mb-6">
-                <h2 className="text-xl font-semibold text-white">
+                <h2 className="text-2xl font-semibold text-white">
                   Buy TSLA-SF
                 </h2>
 
-                <p className="mt-1 text-sm text-zinc-500">
+                <p className="mt-2 text-sm text-zinc-500">
                   USDC → TSLA-SF
                   through the real
                   deployed Meteora
@@ -586,12 +1257,12 @@ export function DbcMarketClient() {
               ) : null}
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
-              <h2 className="text-xl font-semibold text-white">
+            <div className="rounded-[26px] border border-white/[0.08] bg-[#0d1014] p-6 sm:p-8">
+              <h2 className="text-2xl font-semibold text-white">
                 On-chain market
               </h2>
 
-              <div className="mt-6 space-y-4">
+              <div className="mt-7 space-y-5">
                 <AddressRow
                   label="DBC pool"
                   value={
@@ -651,7 +1322,7 @@ export function DbcMarketClient() {
                 disabled={
                   loadingPool
                 }
-                className="mt-6 w-full rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-zinc-300 transition hover:bg-white/[0.05] disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-7 w-full rounded-xl border border-white/10 px-4 py-3 text-sm font-medium text-zinc-300 transition hover:bg-white/[0.05] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loadingPool
                   ? "Refreshing..."
@@ -665,6 +1336,94 @@ export function DbcMarketClient() {
   );
 }
 
+function IntelligenceMetric({
+  label,
+  value,
+  detail,
+  tone = "unknown",
+}: {
+  label: string;
+  value: string;
+  detail: string;
+
+  tone?:
+    | "below"
+    | "near"
+    | "above"
+    | "unknown";
+}) {
+  const Icon =
+    tone === "below"
+      ? ArrowDownRight
+      : tone === "above"
+        ? ArrowUpRight
+        : tone === "near"
+          ? Activity
+          : CircleDollarSign;
+
+  return (
+    <div className="bg-[#0d1014] p-6">
+      <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-zinc-600">
+        <Icon className="h-4 w-4" />
+
+        {label}
+      </div>
+
+      <p className="mt-4 text-2xl font-semibold tracking-tight text-white">
+        {value}
+      </p>
+
+      <p className="mt-2 text-xs leading-5 text-zinc-600">
+        {detail}
+      </p>
+    </div>
+  );
+}
+
+function zoneLabel(
+  zone: StockForgeZone
+) {
+  switch (zone) {
+    case "discovery":
+      return "Discovery";
+
+    case "fairValue":
+      return "Fair Value";
+
+    case "expansion":
+      return "Expansion";
+
+    default:
+      return "Outside curve";
+  }
+}
+
+function ZoneMetric({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-5">
+      <p className="text-xs uppercase tracking-[0.14em] text-zinc-600">
+        {label}
+      </p>
+
+      <p className="mt-3 text-xl font-semibold text-white">
+        {value}
+      </p>
+
+      <p className="mt-2 text-xs leading-5 text-zinc-600">
+        {detail}
+      </p>
+    </div>
+  );
+}
+
 function Metric({
   label,
   value,
@@ -673,7 +1432,7 @@ function Metric({
   value: string;
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+    <div className="rounded-2xl border border-white/10 bg-[#0d1014] p-5">
       <p className="text-xs uppercase tracking-wider text-zinc-500">
         {label}
       </p>
