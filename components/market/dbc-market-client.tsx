@@ -35,9 +35,17 @@ import {
 import {
   executeStockForgeBuy,
   getStockForgeBuyQuote,
-  STOCKFORGE_DEMO_POOL,
   type StockForgeBuyQuote,
 } from "@/lib/meteora/trade-stockforge";
+
+import {
+  getStockForgeMarketOptions,
+  type StockForgeMarketOption,
+} from "@/lib/stockforge/market-registry";
+
+import type {
+  PythEquityTicker,
+} from "@/lib/pyth/feeds";
 
 import {
   usePythPrice,
@@ -126,7 +134,7 @@ type CurveZones = {
 type WalletTokenBalances = {
   owner: string;
   usdc: number;
-  tslaSf: number;
+  assetToken: number;
 };
 
 type TradePreview = {
@@ -140,7 +148,7 @@ type TradePreview = {
   allInExecutionPrice: number;
   allInPremiumVsSpot: number;
   estimatedUsdcAfter: number | null;
-  estimatedTslaAfter: number | null;
+  estimatedAssetAfter: number | null;
 };
 
 const Q64 =
@@ -229,7 +237,7 @@ function deriveDbcPrice(
    * Meteora DBC stores sqrt(price)
    * in Q64.64 fixed-point format.
    *
-   * TSLA-SF and Devnet USDC both
+   * StockForge base tokens and Devnet USDC both
    * use 6 decimals, so no decimal
    * adjustment is required here.
    *
@@ -476,11 +484,75 @@ export function DbcMarketClient() {
     setVisible,
   } = useWalletModal();
 
+  const [
+    marketOptions,
+    setMarketOptions,
+  ] =
+    useState<
+      StockForgeMarketOption[]
+    >(() =>
+      getStockForgeMarketOptions()
+    );
+
+  const [
+    selectedTicker,
+    setSelectedTicker,
+  ] =
+    useState<PythEquityTicker>(
+      "TSLA"
+    );
+
+  /*
+   * Re-read browser deployments after
+   * hydration so newly deployed markets
+   * stored in localStorage are available.
+   */
+  useEffect(() => {
+    const refreshRegistry =
+      window.setTimeout(() => {
+        setMarketOptions(
+          getStockForgeMarketOptions()
+        );
+      }, 0);
+
+    return () => {
+      window.clearTimeout(
+        refreshRegistry
+      );
+    };
+  }, []);
+
+  const selectedMarket =
+    useMemo(
+      () =>
+        marketOptions.find(
+          (marketOption) =>
+            marketOption.ticker ===
+            selectedTicker
+        ) ??
+        marketOptions[0]!,
+      [
+        marketOptions,
+        selectedTicker,
+      ]
+    );
+
+  const selectedAsset =
+    selectedMarket.asset;
+
+  const selectedDeployment =
+    selectedMarket.deployment;
+
+  const selectedPoolAddress =
+    selectedDeployment
+      ?.poolAddress ??
+    null;
+
   const {
     data: livePrice,
   } =
     usePythPrice(
-      "TSLA"
+      selectedTicker
     );
 
   const [
@@ -547,15 +619,60 @@ export function DbcMarketClient() {
       null
     );
 
+  function selectMarket(
+    ticker: PythEquityTicker
+  ) {
+    if (
+      ticker ===
+      selectedTicker
+    ) {
+      return;
+    }
+
+    const nextMarket =
+      marketOptions.find(
+        (marketOption) =>
+          marketOption.ticker ===
+          ticker
+      );
+
+    setSelectedTicker(
+      ticker
+    );
+
+    setPool(null);
+    setQuote(null);
+    setSignature(null);
+    setError(null);
+    setWalletBalances(null);
+
+    setLoadingPool(
+      Boolean(
+        nextMarket?.deployment
+      )
+    );
+  }
+
   const refreshPool =
     useCallback(
       async () => {
+        if (
+          !selectedPoolAddress
+        ) {
+          setLoadingPool(
+            false
+          );
+          return;
+        }
+
         setLoadingPool(true);
 
         try {
           const response =
             await fetch(
-              `/api/meteora/pool?pool=${STOCKFORGE_DEMO_POOL.toBase58()}`,
+              `/api/meteora/pool?pool=${encodeURIComponent(
+                selectedPoolAddress
+              )}`,
               {
                 cache:
                   "no-store",
@@ -587,13 +704,18 @@ export function DbcMarketClient() {
           setLoadingPool(false);
         }
       },
-      []
+      [
+        selectedPoolAddress,
+      ]
     );
 
   const refreshWalletBalances =
     useCallback(
       async () => {
-        if (!publicKey || !pool) {
+        if (
+          !publicKey ||
+          !pool
+        ) {
           return;
         }
 
@@ -602,7 +724,7 @@ export function DbcMarketClient() {
 
         const [
           usdc,
-          tslaSf,
+          assetToken,
         ] = await Promise.all([
           getMintBalance({
             connection,
@@ -620,7 +742,7 @@ export function DbcMarketClient() {
         setWalletBalances({
           owner,
           usdc,
-          tslaSf,
+          assetToken,
         });
       },
       [
@@ -633,11 +755,24 @@ export function DbcMarketClient() {
   useEffect(() => {
     let cancelled = false;
 
+    if (
+      !selectedPoolAddress
+    ) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const poolAddress =
+      selectedPoolAddress;
+
     async function loadInitialPool() {
       try {
         const response =
           await fetch(
-            `/api/meteora/pool?pool=${STOCKFORGE_DEMO_POOL.toBase58()}`,
+            `/api/meteora/pool?pool=${encodeURIComponent(
+              poolAddress
+            )}`,
             {
               cache:
                 "no-store",
@@ -681,7 +816,9 @@ export function DbcMarketClient() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [
+    selectedPoolAddress,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -692,8 +829,6 @@ export function DbcMarketClient() {
       };
     }
 
-    // Capture the narrowed values before entering the async function.
-    // TypeScript then knows these cannot become null inside the closure.
     const walletPublicKey =
       publicKey;
 
@@ -706,7 +841,7 @@ export function DbcMarketClient() {
     async function loadWalletBalances() {
       const [
         usdc,
-        tslaSf,
+        assetToken,
       ] = await Promise.all([
         getMintBalance({
           connection,
@@ -729,7 +864,7 @@ export function DbcMarketClient() {
         setWalletBalances({
           owner,
           usdc,
-          tslaSf,
+          assetToken,
         });
       }
     }
@@ -976,9 +1111,9 @@ export function DbcMarketClient() {
               inputUsdc
             : null,
 
-        estimatedTslaAfter:
+        estimatedAssetAfter:
           currentWalletBalances
-            ? currentWalletBalances.tslaSf +
+            ? currentWalletBalances.assetToken +
               outputTokens
             : null,
       };
@@ -1016,6 +1151,14 @@ export function DbcMarketClient() {
       const result =
         await getStockForgeBuyQuote({
           connection,
+
+          poolAddress:
+            selectedPoolAddress ??
+            (() => {
+              throw new Error(
+                "Selected market is not deployed."
+              );
+            })(),
 
           amountUsdc:
             amount,
@@ -1059,6 +1202,14 @@ export function DbcMarketClient() {
       const result =
         await executeStockForgeBuy({
           connection,
+
+          poolAddress:
+            selectedPoolAddress ??
+            (() => {
+              throw new Error(
+                "Selected market is not deployed."
+              );
+            })(),
 
           walletPublicKey:
             publicKey,
@@ -1106,35 +1257,164 @@ export function DbcMarketClient() {
 
   return (
     <div className="mx-auto max-w-7xl px-6 pb-24 pt-12 lg:px-8">
-      {/* MARKET HEADER */}
+      {/* MARKET REGISTRY */}
+      <div className="mb-10">
+        <div className="flex items-center gap-2 text-sm font-medium uppercase tracking-[0.18em] text-emerald-400">
+          <BarChart3 className="h-4 w-4" />
+          StockForge Markets
+        </div>
+
+        <h1 className="mt-4 text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+          Multi-asset DBC markets
+        </h1>
+
+        <p className="mt-4 max-w-3xl text-lg leading-7 text-zinc-400">
+          Select a StockForge market to
+          compare its live Pyth reference
+          with its own Meteora Dynamic
+          Bonding Curve and trade the
+          deployed asset on devnet.
+        </p>
+      </div>
+
+      <section className="mb-10 grid gap-4 md:grid-cols-3">
+        {marketOptions.map(
+          (marketOption) => {
+            const selected =
+              marketOption.ticker ===
+              selectedTicker;
+
+            const deployed =
+              marketOption.deployment !==
+              null;
+
+            return (
+              <button
+                key={
+                  marketOption.ticker
+                }
+                type="button"
+                onClick={() =>
+                  selectMarket(
+                    marketOption.ticker
+                  )
+                }
+                className={`rounded-2xl border p-5 text-left transition ${
+                  selected
+                    ? "border-emerald-400/35 bg-emerald-400/[0.07]"
+                    : "border-white/[0.08] bg-[#0d1014] hover:bg-white/[0.03]"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-lg font-semibold text-white">
+                      {
+                        marketOption
+                          .asset
+                          .tokenSymbol
+                      }
+                    </p>
+
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {
+                        marketOption
+                          .asset
+                          .referenceName
+                      }
+                    </p>
+                  </div>
+
+                  <span
+                    className={`rounded-full border px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.12em] ${
+                      deployed
+                        ? "border-emerald-400/20 bg-emerald-400/[0.07] text-emerald-300"
+                        : "border-white/10 bg-white/[0.03] text-zinc-600"
+                    }`}
+                  >
+                    {deployed
+                      ? "Live DBC"
+                      : "Not deployed"}
+                  </span>
+                </div>
+
+                <p className="mt-4 font-mono text-[11px] text-zinc-600">
+                  Pyth ·{" "}
+                  {
+                    marketOption
+                      .ticker
+                  }
+                </p>
+              </button>
+            );
+          }
+        )}
+      </section>
+
+      {/* SELECTED MARKET HEADER */}
       <div className="mb-12">
         <div className="mb-4 flex flex-wrap items-center gap-3">
-          <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
-            DEVNET · LIVE DBC
+          <span
+            className={`rounded-full border px-3 py-1 text-xs font-medium ${
+              selectedDeployment
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                : "border-white/10 bg-white/[0.03] text-zinc-500"
+            }`}
+          >
+            {selectedDeployment
+              ? "DEVNET · LIVE DBC"
+              : "DEVNET · NOT DEPLOYED"}
           </span>
 
-          {pool?.market.hasSwap ===
+          {selectedDeployment &&
+          pool?.market.hasSwap ===
           0 ? (
             <span className="text-sm text-zinc-500">
               No trades yet
             </span>
-          ) : (
+          ) : selectedDeployment &&
+            pool ? (
             <span className="text-sm text-emerald-400">
               Trading active
             </span>
-          )}
+          ) : null}
         </div>
 
-        <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-          TSLA-SF Market
-        </h1>
+        <h2 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+          {selectedAsset.tokenSymbol}{" "}
+          Market
+        </h2>
 
         <p className="mt-4 max-w-3xl text-lg text-zinc-400">
-          Real StockForge Meteora
-          Dynamic Bonding Curve on
-          Solana devnet.
+          {selectedAsset.referenceName}{" "}
+          reference intelligence paired
+          with its StockForge Meteora DBC
+          on Solana devnet.
         </p>
       </div>
+
+      {!selectedDeployment ? (
+        <div className="mb-8 rounded-2xl border border-blue-400/20 bg-blue-400/[0.05] p-6">
+          <p className="font-medium text-blue-300">
+            {selectedAsset.tokenSymbol}{" "}
+            has not been deployed yet
+          </p>
+
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-500">
+            Pyth market data is supported
+            for {selectedTicker}, but there
+            is no registered StockForge
+            Meteora DBC pool for this asset
+            yet.
+          </p>
+
+          <a
+            href="/create"
+            className="mt-4 inline-flex rounded-lg border border-blue-400/20 px-3 py-2 text-sm text-blue-300 transition hover:bg-blue-400/[0.06]"
+          >
+            Open Create Market
+          </a>
+        </div>
+      ) : null}
 
       {loadingPool &&
       !pool ? (
@@ -1142,6 +1422,15 @@ export function DbcMarketClient() {
           Loading on-chain
           pool...
         </div>
+      ) : null}
+
+      {selectedDeployment &&
+      !loadingPool &&
+      !pool &&
+      error ? (
+        <pre className="mb-8 overflow-x-auto whitespace-pre-wrap rounded-2xl border border-red-500/20 bg-red-500/10 p-5 text-xs text-red-300">
+          {error}
+        </pre>
       ) : null}
 
       {pool ? (
@@ -1422,11 +1711,11 @@ export function DbcMarketClient() {
           {/* MARKET STATE */}
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <Metric
-              label="TSLA-SF reserve"
+              label={`${selectedAsset.tokenSymbol} reserve`}
               value={`${formatRaw(
                 pool.market
                   .baseReserveRaw
-              )} TSLA-SF`}
+              )} ${selectedAsset.tokenSymbol}`}
             />
 
             <Metric
@@ -1459,11 +1748,11 @@ export function DbcMarketClient() {
             <div className="rounded-[26px] border border-white/[0.08] bg-[#0d1014] p-6 sm:p-8">
               <div className="mb-6">
                 <h2 className="text-2xl font-semibold text-white">
-                  Buy TSLA-SF
+                  Buy {selectedAsset.tokenSymbol}
                 </h2>
 
                 <p className="mt-2 text-sm text-zinc-500">
-                  USDC → TSLA-SF
+                  USDC → {selectedAsset.tokenSymbol}
                   through the real
                   deployed Meteora
                   curve.
@@ -1485,12 +1774,12 @@ export function DbcMarketClient() {
                   />
 
                   <WalletMetric
-                    label="Wallet TSLA-SF"
+                    label={`Wallet ${selectedAsset.tokenSymbol}`}
                     value={
                       currentWalletBalances
                         ? `${formatTokenAmount(
-                            currentWalletBalances.tslaSf
-                          )} TSLA-SF`
+                            currentWalletBalances.assetToken
+                          )} ${selectedAsset.tokenSymbol}`
                         : "Loading..."
                     }
                   />
@@ -1546,12 +1835,12 @@ export function DbcMarketClient() {
                 <div className="mt-5 space-y-3 rounded-xl border border-white/10 bg-black/20 p-4">
                   <QuoteRow
                     label="Expected output"
-                    value={`${quote.outputAmountUi} TSLA-SF`}
+                    value={`${quote.outputAmountUi} ${selectedAsset.tokenSymbol}`}
                   />
 
                   <QuoteRow
                     label="Minimum received"
-                    value={`${quote.minimumAmountOutUi} TSLA-SF`}
+                    value={`${quote.minimumAmountOutUi} ${selectedAsset.tokenSymbol}`}
                   />
 
                   <QuoteRow
@@ -1643,13 +1932,13 @@ export function DbcMarketClient() {
                     />
 
                     <QuoteRow
-                      label="Estimated TSLA-SF after"
+                      label={`Estimated ${selectedAsset.tokenSymbol} after`}
                       value={
-                        tradePreview.estimatedTslaAfter !==
+                        tradePreview.estimatedAssetAfter !==
                         null
                           ? `${formatTokenAmount(
-                              tradePreview.estimatedTslaAfter
-                            )} TSLA-SF`
+                              tradePreview.estimatedAssetAfter
+                            )} ${selectedAsset.tokenSymbol}`
                           : "Connect wallet"
                       }
                     />
@@ -1683,7 +1972,7 @@ export function DbcMarketClient() {
                     ? insufficientUsdc
                       ? "Insufficient devnet USDC"
                       : quote
-                        ? "Buy TSLA-SF"
+                        ? `Buy ${selectedAsset.tokenSymbol}`
                         : "Get quote first"
                     : "Connect wallet to trade"}
               </button>
@@ -1747,7 +2036,7 @@ export function DbcMarketClient() {
                 />
 
                 <AddressRow
-                  label="TSLA-SF mint"
+                  label={`${selectedAsset.tokenSymbol} mint`}
                   value={
                     pool.addresses
                       .baseMint

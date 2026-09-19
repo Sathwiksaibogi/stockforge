@@ -19,6 +19,11 @@ import {
   Transaction,
 } from "@solana/web3.js";
 
+/*
+ * Kept for backward compatibility with
+ * older StockForge imports. New market
+ * code passes a pool address explicitly.
+ */
 export const STOCKFORGE_DEMO_POOL =
   new PublicKey(
     "9HTtUh7LbwwteNrx3ApESmhbQdoxiswgjCCD9Te4nBei"
@@ -70,6 +75,8 @@ type InternalQuote = {
     ReturnType<
       typeof DynamicBondingCurveClient.create
     >;
+
+  poolAddress: PublicKey;
 
   amountIn: BN;
 
@@ -168,7 +175,7 @@ function requireBnField(
     value === null
   ) {
     throw new Error(
-      `Invalid Meteora quote result.`
+      "Invalid Meteora quote result."
     );
   }
 
@@ -248,18 +255,43 @@ function optionalBnField(
   return new BN(0);
 }
 
+function normalizePoolAddress(
+  poolAddress:
+    | string
+    | PublicKey
+) {
+  return poolAddress instanceof
+    PublicKey
+    ? poolAddress
+    : new PublicKey(
+        poolAddress
+      );
+}
+
 async function prepareStockForgeBuyQuote({
   connection,
+  poolAddress,
   amountUsdc,
   slippageBps,
 }: {
   connection: Connection;
+
+  poolAddress:
+    | string
+    | PublicKey;
+
   amountUsdc: string;
+
   slippageBps: number;
 }): Promise<InternalQuote> {
   validateSlippage(
     slippageBps
   );
+
+  const selectedPool =
+    normalizePoolAddress(
+      poolAddress
+    );
 
   const client =
     DynamicBondingCurveClient.create(
@@ -269,12 +301,12 @@ async function prepareStockForgeBuyQuote({
 
   const virtualPool =
     await client.state.getPool(
-      STOCKFORGE_DEMO_POOL
+      selectedPool
     );
 
   if (!virtualPool) {
     throw new Error(
-      "StockForge Meteora DBC pool was not found."
+      "Selected StockForge Meteora DBC pool was not found."
     );
   }
 
@@ -299,17 +331,17 @@ async function prepareStockForgeBuyQuote({
 
   if (!config) {
     throw new Error(
-      "StockForge Meteora DBC config was not found."
+      "Selected StockForge Meteora DBC config was not found."
     );
   }
 
   const activationType =
     config.activationType as ActivationType;
 
-    const currentPoint =
+  const currentPoint =
     await getCurrentPoint(
-        connection,
-        activationType
+      connection,
+      activationType
     );
 
   const amountIn =
@@ -327,7 +359,7 @@ async function prepareStockForgeBuyQuote({
       .hasSwap === 0;
 
   /*
-   * USDC -> TSLA-SF
+   * USDC -> selected StockForge asset.
    *
    * quote token enters,
    * base token leaves.
@@ -395,13 +427,16 @@ async function prepareStockForgeBuyQuote({
   return {
     client,
 
+    poolAddress:
+      selectedPool,
+
     amountIn,
 
     minimumAmountOut,
 
     display: {
       pool:
-        STOCKFORGE_DEMO_POOL
+        selectedPool
           .toBase58(),
 
       config:
@@ -475,16 +510,25 @@ async function prepareStockForgeBuyQuote({
 
 export async function getStockForgeBuyQuote({
   connection,
+  poolAddress =
+    STOCKFORGE_DEMO_POOL,
   amountUsdc,
   slippageBps = 100,
 }: {
   connection: Connection;
+
+  poolAddress?:
+    | string
+    | PublicKey;
+
   amountUsdc: string;
+
   slippageBps?: number;
 }) {
   const result =
     await prepareStockForgeBuyQuote({
       connection,
+      poolAddress,
       amountUsdc,
       slippageBps,
     });
@@ -502,7 +546,8 @@ async function signSendAndConfirm({
 
   transaction: Transaction;
 
-  walletPublicKey: PublicKey;
+  walletPublicKey:
+    PublicKey;
 
   signTransaction:
     WalletSignTransaction;
@@ -604,12 +649,18 @@ async function signSendAndConfirm({
 
 export async function executeStockForgeBuy({
   connection,
+  poolAddress =
+    STOCKFORGE_DEMO_POOL,
   walletPublicKey,
   signTransaction,
   amountUsdc,
   slippageBps = 100,
 }: {
   connection: Connection;
+
+  poolAddress?:
+    | string
+    | PublicKey;
 
   walletPublicKey:
     PublicKey;
@@ -629,6 +680,7 @@ export async function executeStockForgeBuy({
   const prepared =
     await prepareStockForgeBuyQuote({
       connection,
+      poolAddress,
       amountUsdc,
       slippageBps,
     });
@@ -645,7 +697,7 @@ export async function executeStockForgeBuy({
           walletPublicKey,
 
         pool:
-          STOCKFORGE_DEMO_POOL,
+          prepared.poolAddress,
 
         swapBaseForQuote:
           false,
