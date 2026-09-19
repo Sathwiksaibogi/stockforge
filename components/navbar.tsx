@@ -16,6 +16,10 @@ const links = [
     href: "/",
   },
   {
+    label: "Explore",
+    href: "/explore",
+  },
+  {
     label: "Create",
     href: "/create",
   },
