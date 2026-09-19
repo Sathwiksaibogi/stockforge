@@ -1,12 +1,12 @@
 {
-  "name": "StockForge TSLA Demo",
-  "symbol": "TSLA-SF",
-  "description": "StockForge hackathon demo token whose launch curve is informed by Pyth TSLA market data and deployed through Meteora DBC on Solana devnet. This token does not represent Tesla equity, ownership, dividends, voting rights, or any legal claim on Tesla, Inc.",
+  "name": "StockForge VOO Demo",
+  "symbol": "VOO-SF",
+  "description": "StockForge hackathon demo token whose launch curve is informed by Pyth VOO market data and deployed through Meteora DBC on Solana devnet. This token does not represent shares of Vanguard S&P 500 ETF, fund ownership, distributions, voting rights, or any legal claim.",
   "external_url": "https://stockforge-liard.vercel.app/",
   "attributes": [
     {
       "trait_type": "Reference Asset",
-      "value": "TSLA"
+      "value": "VOO"
     },
     {
       "trait_type": "Launch Engine",

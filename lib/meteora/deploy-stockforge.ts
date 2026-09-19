@@ -1,6 +1,5 @@
 "use client";
 
-
 import type {
   WalletContextState,
 } from "@solana/wallet-adapter-react";
@@ -22,6 +21,10 @@ import type {
   CalibratedMeteoraCurve,
 } from "./calibrate-stockforge";
 
+import type {
+  PythEquityTicker,
+} from "@/lib/pyth/feeds";
+
 export const DEVNET_USDC_MINT =
   new PublicKey(
     "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
@@ -29,6 +32,12 @@ export const DEVNET_USDC_MINT =
 
 const DEVNET_GENESIS_HASH =
   "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
+
+const DEPLOYMENT_REGISTRY_KEY =
+  "stockforge:deployments";
+
+const LAST_DEPLOYMENT_KEY =
+  "stockforge:last-deployment";
 
 export type DeploymentPhase =
   | "checking-network"
@@ -41,6 +50,12 @@ export type DeploymentPhase =
 
 export type StockForgeDeploymentResult = {
   cluster: "devnet";
+
+  ticker: PythEquityTicker;
+
+  tokenName: string;
+
+  tokenSymbol: string;
 
   configAddress: string;
 
@@ -55,6 +70,8 @@ export type StockForgeDeploymentResult = {
   poolSignature: string;
 
   metadataUri: string;
+
+  deployedAt: number;
 };
 
 type DeployStockForgeMarketParams = {
@@ -63,16 +80,18 @@ type DeployStockForgeMarketParams = {
   walletPublicKey: PublicKey;
 
   signTransaction:
-  WalletSignTransaction;
+    WalletSignTransaction;
 
   calibrated:
     CalibratedMeteoraCurve;
 
+  ticker: PythEquityTicker;
+
   metadataUri: string;
 
-  name?: string;
+  name: string;
 
-  symbol?: string;
+  symbol: string;
 
   onPhase?: (
     phase: DeploymentPhase
@@ -90,17 +109,15 @@ async function signSendAndConfirm({
   walletPublicKey,
   additionalSigner,
   signTransaction,
+  onSubmitted,
 }: {
   connection: Connection;
   transaction: Transaction;
   walletPublicKey: PublicKey;
   additionalSigner: Keypair;
   signTransaction: WalletSignTransaction;
+  onSubmitted?: () => void;
 }) {
-  /*
-   * Get the blockhash immediately before
-   * asking Phantom to sign.
-   */
   const {
     context,
     value: latestBlockhash,
@@ -109,31 +126,16 @@ async function signSendAndConfirm({
       "confirmed"
     );
 
-  /*
-   * Force the transaction onto the same
-   * devnet connection StockForge verified.
-   */
   transaction.feePayer =
     walletPublicKey;
 
   transaction.recentBlockhash =
     latestBlockhash.blockhash;
 
-  /*
-   * Meteora's newly-created account must
-   * sign before Phantom signs as payer.
-   *
-   * Config TX  -> configKeypair
-   * Pool TX    -> baseMintKeypair
-   */
   transaction.partialSign(
     additionalSigner
   );
 
-  /*
-   * Phantom signs only.
-   * Phantom does NOT broadcast.
-   */
   const signedTransaction =
     await signTransaction(
       transaction
@@ -142,14 +144,6 @@ async function signSendAndConfirm({
   let signature: string;
 
   try {
-    /*
-     * StockForge broadcasts through the
-     * exact verified devnet RPC.
-     *
-     * skipPreflight=false is intentional:
-     * if Meteora rejects our config, we
-     * want the real simulation error now.
-     */
     signature =
       await connection.sendRawTransaction(
         signedTransaction.serialize(),
@@ -183,10 +177,8 @@ async function signSendAndConfirm({
     throw error;
   }
 
-  /*
-   * Confirm against the EXACT blockhash
-   * lifetime used for this transaction.
-   */
+  onSubmitted?.();
+
   const confirmation =
     await connection.confirmTransaction(
       {
@@ -261,16 +253,75 @@ async function assertDevnet(
   }
 }
 
+function persistDeployment(
+  result: StockForgeDeploymentResult
+) {
+  window.localStorage.setItem(
+    LAST_DEPLOYMENT_KEY,
+    JSON.stringify(result)
+  );
+
+  let existing:
+    StockForgeDeploymentResult[] =
+    [];
+
+  try {
+    const stored =
+      window.localStorage.getItem(
+        DEPLOYMENT_REGISTRY_KEY
+      );
+
+    const parsed =
+      stored
+        ? JSON.parse(stored)
+        : [];
+
+    if (Array.isArray(parsed)) {
+      existing =
+        parsed.filter(
+          (
+            item
+          ): item is StockForgeDeploymentResult =>
+            typeof item ===
+              "object" &&
+            item !== null &&
+            typeof (
+              item as {
+                poolAddress?: unknown;
+              }
+            ).poolAddress ===
+              "string"
+        );
+    }
+  } catch {
+    existing = [];
+  }
+
+  const withoutDuplicate =
+    existing.filter(
+      (item) =>
+        item.poolAddress !==
+        result.poolAddress
+    );
+
+  window.localStorage.setItem(
+    DEPLOYMENT_REGISTRY_KEY,
+    JSON.stringify([
+      result,
+      ...withoutDuplicate,
+    ])
+  );
+}
+
 export async function deployStockForgeMarket({
   connection,
   walletPublicKey,
   signTransaction,
   calibrated,
+  ticker,
   metadataUri,
-  name =
-    "StockForge TSLA Demo",
-  symbol =
-    "TSLA-SF",
+  name,
+  symbol,
   onPhase,
 }: DeployStockForgeMarketParams): Promise<StockForgeDeploymentResult> {
   onPhase?.(
@@ -291,34 +342,29 @@ export async function deployStockForgeMarket({
     );
   }
 
+  if (!name.trim()) {
+    throw new Error(
+      "Token name is required."
+    );
+  }
+
+  if (!symbol.trim()) {
+    throw new Error(
+      "Token symbol is required."
+    );
+  }
+
   const client =
     DynamicBondingCurveClient.create(
       connection,
       "confirmed"
     );
 
-  /*
-   * These two new accounts need
-   * independent signatures.
-   *
-   * configKeypair:
-   * owns the new Meteora PoolConfig account.
-   *
-   * baseMintKeypair:
-   * becomes the new StockForge token mint.
-   */
   const configKeypair =
     Keypair.generate();
 
   const baseMintKeypair =
     Keypair.generate();
-
-  /*
-   * ----------------------------------------
-   * TRANSACTION 1
-   * Create Meteora DBC config
-   * ----------------------------------------
-   */
 
   onPhase?.(
     "creating-config"
@@ -329,20 +375,9 @@ export async function deployStockForgeMarket({
       config:
         configKeypair.publicKey,
 
-      /*
-       * StockForge self-launch model:
-       * connected wallet is partner
-       * authority and fee receiver.
-       */
       feeClaimer:
         walletPublicKey,
 
-      /*
-       * 797 leftover tokens in our
-       * current calibrated example will
-       * eventually be withdrawable here
-       * after migration.
-       */
       leftoverReceiver:
         walletPublicKey,
 
@@ -352,46 +387,33 @@ export async function deployStockForgeMarket({
       quoteMint:
         DEVNET_USDC_MINT,
 
-      /*
-       * This contains:
-       *
-       * - sqrt start price
-       * - custom curve points
-       * - 58 bps fee
-       * - migration threshold
-       * - token supply
-       * - leftover
-       * - DAMM v2 migration settings
-       */
       ...calibrated.meteoraConfig,
     });
 
-const configSignature =
-  await signSendAndConfirm({
-    connection,
+  const configSignature =
+    await signSendAndConfirm({
+      connection,
 
-    transaction:
-      createConfigTx,
+      transaction:
+        createConfigTx,
 
-    walletPublicKey,
+      walletPublicKey,
 
-    additionalSigner:
-      configKeypair,
+      additionalSigner:
+        configKeypair,
 
-    signTransaction,
-  });
+      signTransaction,
+
+      onSubmitted: () =>
+        onPhase?.(
+          "confirming-config"
+        ),
+    });
 
   await waitForAccount(
     connection,
     configKeypair.publicKey
   );
-
-  /*
-   * ----------------------------------------
-   * TRANSACTION 2
-   * Create token + DBC pool
-   * ----------------------------------------
-   */
 
   onPhase?.(
     "creating-pool"
@@ -420,30 +442,25 @@ const configSignature =
     });
 
   const poolSignature =
-  await signSendAndConfirm({
-    connection,
+    await signSendAndConfirm({
+      connection,
 
-    transaction:
-      createPoolTx,
+      transaction:
+        createPoolTx,
 
-    walletPublicKey,
+      walletPublicKey,
 
-    additionalSigner:
-      baseMintKeypair,
+      additionalSigner:
+        baseMintKeypair,
 
-    signTransaction,
-  });
+      signTransaction,
 
-  /*
-   * Meteora derives the active DBC pool
-   * from:
-   *
-   * quote mint
-   * +
-   * base mint
-   * +
-   * config
-   */
+      onSubmitted: () =>
+        onPhase?.(
+          "confirming-pool"
+        ),
+    });
+
   const poolAddress =
     deriveDbcPoolAddress(
       DEVNET_USDC_MINT,
@@ -487,6 +504,14 @@ const configSignature =
       cluster:
         "devnet",
 
+      ticker,
+
+      tokenName:
+        name,
+
+      tokenSymbol:
+        symbol,
+
       configAddress:
         configKeypair.publicKey.toBase58(),
 
@@ -504,15 +529,13 @@ const configSignature =
       poolSignature,
 
       metadataUri,
+
+      deployedAt:
+        Date.now(),
     };
 
-  /*
-   * Temporary persistence until we add
-   * the proper StockForge market registry.
-   */
-  window.localStorage.setItem(
-    "stockforge:last-deployment",
-    JSON.stringify(result)
+  persistDeployment(
+    result
   );
 
   onPhase?.(

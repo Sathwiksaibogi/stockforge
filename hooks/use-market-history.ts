@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
 
@@ -35,11 +36,18 @@ export function useMarketHistory(
   const [error, setError] =
     useState<string | null>(null);
 
+  const requestSequence =
+    useRef(0);
+
   const fetchHistory =
     useCallback(async () => {
-      try {
-        setLoading(true);
+      const requestId =
+        ++requestSequence.current;
 
+      setLoading(true);
+      setError(null);
+
+      try {
         const response =
           await fetch(
             `/api/pyth/history?ticker=${encodeURIComponent(
@@ -60,20 +68,41 @@ export function useMarketHistory(
           );
         }
 
+        if (
+          requestId !==
+          requestSequence.current
+        ) {
+          return;
+        }
+
         setData(json);
         setError(null);
       } catch (err) {
+        if (
+          requestId !==
+          requestSequence.current
+        ) {
+          return;
+        }
+
         setError(
           err instanceof Error
             ? err.message
             : "Unknown historical market-data error."
         );
       } finally {
-        setLoading(false);
+        if (
+          requestId ===
+          requestSequence.current
+        ) {
+          setLoading(false);
+        }
       }
     }, [ticker, days]);
 
   useEffect(() => {
+    requestSequence.current += 1;
+
     const initialRequest =
       window.setTimeout(() => {
         void fetchHistory();

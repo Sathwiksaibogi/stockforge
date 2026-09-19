@@ -38,7 +38,18 @@ import type {
   StockForgeDeploymentResult,
 } from "@/lib/meteora/deploy-stockforge";
 
+import type {
+  PythEquityTicker,
+} from "@/lib/pyth/feeds";
+
+import {
+  getStockForgeAsset,
+  getStockForgeMetadataUri,
+} from "@/lib/stockforge/assets";
+
 type Props = {
+  ticker: PythEquityTicker;
+
   referencePrice: number;
 
   annualizedVolatility: number;
@@ -80,6 +91,7 @@ const PHASE_LABELS:
   };
 
 export function DeployMarketButton({
+  ticker,
   referencePrice,
   annualizedVolatility,
   targetRaiseUsd,
@@ -98,6 +110,11 @@ export function DeployMarketButton({
     signTransaction,
   } =
     useWallet();
+
+  const asset =
+    getStockForgeAsset(
+      ticker
+    );
 
   const [
     phase,
@@ -136,26 +153,17 @@ export function DeployMarketButton({
         !connected ||
         !publicKey ||
         !signTransaction
-        ) {
+      ) {
         throw new Error(
-            "Connect a wallet that supports transaction signing before deploying."
-        );
-        }
-
-      const metadataUri =
-        process.env
-          .NEXT_PUBLIC_STOCKFORGE_METADATA_URI;
-
-      if (!metadataUri) {
-        throw new Error(
-          "NEXT_PUBLIC_STOCKFORGE_METADATA_URI is not configured."
+          "Connect a wallet that supports transaction signing before deploying."
         );
       }
 
-      /*
-       * Rebuild the EXACT frozen market,
-       * not the current live Pyth market.
-       */
+      const metadataUri =
+        getStockForgeMetadataUri(
+          ticker
+        );
+
       const curve =
         compileStockForgeCurve({
           referencePrice,
@@ -188,7 +196,15 @@ export function DeployMarketButton({
 
           calibrated,
 
+          ticker,
+
           metadataUri,
+
+          name:
+            asset.tokenName,
+
+          symbol:
+            asset.tokenSymbol,
 
           onPhase:
             setPhase,
@@ -221,16 +237,30 @@ export function DeployMarketButton({
 
           <div className="min-w-0 flex-1">
             <p className="font-medium text-emerald-300">
-              StockForge market deployed
+              {result.tokenSymbol} market deployed
             </p>
 
             <p className="mt-2 text-sm text-zinc-500">
-              Your Meteora DBC config and
-              pool are live on Solana
-              devnet.
+              The {result.ticker} StockForge
+              Meteora DBC config and pool are
+              live on Solana devnet.
             </p>
 
             <div className="mt-5 space-y-3 font-mono text-xs">
+              <AddressRow
+                label="Reference asset"
+                value={
+                  result.ticker
+                }
+              />
+
+              <AddressRow
+                label="Token"
+                value={
+                  result.tokenSymbol
+                }
+              />
+
               <AddressRow
                 label="Config"
                 value={
@@ -275,6 +305,17 @@ export function DeployMarketButton({
 
                 <ExternalLink className="h-3 w-3" />
               </a>
+
+              <a
+                href={`https://explorer.solana.com/address/${result.poolAddress}?cluster=devnet`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs text-zinc-300 transition hover:bg-white/[0.05]"
+              >
+                View DBC pool
+
+                <ExternalLink className="h-3 w-3" />
+              </a>
             </div>
           </div>
         </div>
@@ -284,8 +325,28 @@ export function DeployMarketButton({
 
   return (
     <>
+      <div className="mt-8 rounded-2xl border border-white/[0.07] bg-black/20 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-zinc-200">
+              Deploy {asset.tokenSymbol}
+            </p>
+
+            <p className="mt-1 text-xs leading-5 text-zinc-600">
+              Uses the frozen {ticker} Pyth snapshot
+              and creates a new asset-specific Meteora
+              DBC on devnet.
+            </p>
+          </div>
+
+          <span className="rounded-full border border-emerald-400/20 bg-emerald-400/[0.07] px-3 py-1 text-xs text-emerald-300">
+            {ticker} · DEVNET
+          </span>
+        </div>
+      </div>
+
       {error && (
-        <div className="mt-8 flex gap-3 rounded-xl border border-red-400/20 bg-red-400/[0.05] p-4 text-sm text-red-300">
+        <div className="mt-4 flex gap-3 rounded-xl border border-red-400/20 bg-red-400/[0.05] p-4 text-sm text-red-300">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
 
           <span>
@@ -302,7 +363,7 @@ export function DeployMarketButton({
         disabled={
           deploying
         }
-        className="mt-8 flex h-13 w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 font-semibold text-[#04110c] transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+        className="mt-4 flex h-13 w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 font-semibold text-[#04110c] transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
       >
         {deploying ? (
           <>
@@ -318,14 +379,14 @@ export function DeployMarketButton({
           <>
             <Rocket className="h-4 w-4" />
 
-            Deploy DBC market on devnet
+            Deploy {asset.tokenSymbol} on devnet
           </>
         )}
       </button>
 
       <p className="mt-3 text-center text-[11px] text-zinc-700">
-        Creates real Solana accounts and
-        requires two wallet approvals.
+        Creates a new token mint, Meteora DBC config,
+        and pool. Requires two wallet approvals.
       </p>
     </>
   );

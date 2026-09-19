@@ -42,6 +42,12 @@ import type {
   StockForgeSimulationScenario,
 } from "@/lib/meteora/simulation-types";
 
+import {
+  PYTH_EQUITY_FEEDS,
+  type PythEquityTicker,
+  isPythEquityTicker,
+} from "@/lib/pyth/feeds";
+
 const PRESETS = [
   100,
   1_000,
@@ -103,8 +109,15 @@ export function SimulationClient() {
   const searchParams =
     useSearchParams();
 
+  
+
   const snapshot =
     useMemo(() => {
+      const tickerParam =
+        searchParams.get(
+          "ticker"
+        );
+
       const referencePrice =
         Number(
           searchParams.get(
@@ -153,6 +166,10 @@ export function SimulationClient() {
         );
 
       if (
+        !tickerParam ||
+        !isPythEquityTicker(
+          tickerParam
+        ) ||
         !Number.isFinite(
           referencePrice
         ) ||
@@ -180,6 +197,9 @@ export function SimulationClient() {
       }
 
       return {
+        ticker:
+          tickerParam,
+
         referencePrice,
 
         annualizedVolatility,
@@ -210,11 +230,15 @@ export function SimulationClient() {
    * It does not reconstruct the
    * proposed DBC.
    */
+  const liveTicker =
+    snapshot?.ticker ??
+    "TSLA";
+
   const {
     data: livePrice,
   } =
     usePythPrice(
-      "TSLA"
+      liveTicker
     );
 
   const [
@@ -305,7 +329,9 @@ export function SimulationClient() {
   if (!snapshot) {
     return (
       <main className="min-h-screen bg-[#07090c] text-white">
-        <div className="mx-auto max-w-3xl px-6 pt-12 lg:px-8">
+        
+
+        <div className="mx-auto max-w-3xl px-6 pt-40">
           <div className="rounded-2xl border border-amber-400/20 bg-amber-400/[0.05] p-8">
             <AlertTriangle className="h-6 w-6 text-amber-300" />
 
@@ -336,7 +362,9 @@ export function SimulationClient() {
 
   return (
     <main className="min-h-screen bg-[#07090c] text-white">
-      <div className="mx-auto max-w-7xl px-6 pb-24 pt-12 lg:px-8">
+      
+
+      <div className="mx-auto max-w-7xl px-6 pb-24 pt-36 lg:px-8">
         <Link
           href="/create"
           className="inline-flex items-center gap-2 text-sm text-zinc-500 transition hover:text-white"
@@ -354,14 +382,14 @@ export function SimulationClient() {
           </div>
 
           <h1 className="mt-5 text-4xl font-semibold tracking-[-0.03em] sm:text-5xl">
-            Stress-test the market
-            before deployment.
+            Stress-test the {snapshot.ticker}
+            market before deployment.
           </h1>
 
           <p className="mt-5 max-w-2xl leading-7 text-zinc-400">
             The DBC below is frozen
             from the issuer&apos;s
-            compile-time Pyth snapshot.
+            {" "}{snapshot.ticker} Pyth snapshot.
             Current Pyth prices continue
             updating independently.
           </p>
@@ -377,7 +405,7 @@ export function SimulationClient() {
               snapshot
                 .referencePrice
             )}
-            detail="Frozen Pyth snapshot"
+            detail={`Frozen Pyth ${snapshot.ticker} snapshot`}
           />
 
           <Metric
@@ -398,7 +426,7 @@ export function SimulationClient() {
                 ? `${percent(
                     liveReferenceMove
                   )} since compile`
-                : "Live comparison"
+                : `Live ${snapshot.ticker} comparison`
             }
           />
 
@@ -549,6 +577,11 @@ export function SimulationClient() {
 
                   <div className="mt-4 space-y-3 text-sm">
                     <Row
+                      label="Reference asset"
+                      value={`${snapshot.ticker} · ${PYTH_EQUITY_FEEDS[snapshot.ticker].name}`}
+                    />
+
+                    <Row
                       label="Risk profile"
                       value={
                         snapshot
@@ -594,7 +627,7 @@ export function SimulationClient() {
                   <QuotePanel
                     scenario={scenario}
                     snapshot={snapshot}
-                  />
+                    />
                 ) : (
                   <div className="flex min-h-[400px] items-center justify-center text-sm text-zinc-600">
                     Select a scenario.
@@ -616,6 +649,7 @@ function QuotePanel({
   scenario: StockForgeSimulationScenario;
 
   snapshot: {
+    ticker: PythEquityTicker;
     referencePrice: number;
     annualizedVolatility: number;
     targetRaiseUsd: number;
@@ -805,6 +839,9 @@ function QuotePanel({
       </div>
 
       <DeployMarketButton
+        ticker={
+          snapshot.ticker
+        }
         referencePrice={
           snapshot.referencePrice
         }

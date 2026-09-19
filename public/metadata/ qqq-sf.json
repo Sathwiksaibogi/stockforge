@@ -1,12 +1,12 @@
 {
-  "name": "StockForge TSLA Demo",
-  "symbol": "TSLA-SF",
-  "description": "StockForge hackathon demo token whose launch curve is informed by Pyth TSLA market data and deployed through Meteora DBC on Solana devnet. This token does not represent Tesla equity, ownership, dividends, voting rights, or any legal claim on Tesla, Inc.",
+  "name": "StockForge QQQ Demo",
+  "symbol": "QQQ-SF",
+  "description": "StockForge hackathon demo token whose launch curve is informed by Pyth QQQ market data and deployed through Meteora DBC on Solana devnet. This token does not represent shares of Invesco QQQ Trust, fund ownership, distributions, voting rights, or any legal claim.",
   "external_url": "https://stockforge-liard.vercel.app/",
   "attributes": [
     {
       "trait_type": "Reference Asset",
-      "value": "TSLA"
+      "value": "QQQ"
     },
     {
       "trait_type": "Launch Engine",

@@ -39,6 +39,11 @@ import type {
   RiskProfile,
 } from "@/lib/curve-engine/types";
 
+import {
+  PYTH_EQUITY_FEEDS,
+  type PythEquityTicker,
+} from "@/lib/pyth/feeds";
+
 function formatMoney(
   value: number
 ) {
@@ -57,6 +62,11 @@ function formatPercent(
 ) {
   return `${value.toFixed(2)}%`;
 }
+
+const supportedAssets =
+  Object.values(
+    PYTH_EQUITY_FEEDS
+  );
 
 const profiles: {
   id: RiskProfile;
@@ -90,18 +100,33 @@ export default function CreateMarketPage() {
   const router =
     useRouter();
 
+  const [
+    selectedTicker,
+    setSelectedTicker,
+  ] =
+    useState<PythEquityTicker>(
+      "TSLA"
+    );
+
+  const selectedAsset =
+    PYTH_EQUITY_FEEDS[
+      selectedTicker
+    ];
+
   const {
     data: price,
     loading: priceLoading,
     error: priceError,
-  } = usePythPrice("TSLA");
+  } = usePythPrice(
+    selectedTicker
+  );
 
   const {
     data: history,
     loading: historyLoading,
     error: historyError,
   } = useMarketHistory(
-    "TSLA",
+    selectedTicker,
     30
   );
 
@@ -208,7 +233,7 @@ export default function CreateMarketPage() {
   const params =
     new URLSearchParams({
       ticker:
-        "TSLA",
+        selectedTicker,
 
       reference:
         price.price.toString(),
@@ -264,17 +289,17 @@ export default function CreateMarketPage() {
           </h1>
 
           <p className="mt-5 max-w-2xl leading-7 text-zinc-400">
-            StockForge converts Pyth
-            reference prices and realized
-            volatility into a deterministic
-            tokenized-equity launch profile.
+            StockForge converts live Pyth
+            market references and realized
+            volatility into deterministic
+            asset-specific launch profiles.
           </p>
         </div>
 
         {loading && (
           <div className="mt-12 rounded-2xl border border-white/[0.07] bg-[#0d1014] p-8 text-sm text-zinc-500">
             Loading Pyth market
-            intelligence...
+            intelligence for {selectedTicker}...
           </div>
         )}
 
@@ -295,7 +320,7 @@ export default function CreateMarketPage() {
                   value={formatMoney(
                     price.price
                   )}
-                  subtitle="Pyth Pro · TSLA"
+                  subtitle={`Pyth Pro · ${selectedTicker}`}
                 />
 
                 <MetricCard
@@ -351,14 +376,59 @@ export default function CreateMarketPage() {
                         Reference asset
                       </label>
 
-                      <div className="mt-3 flex items-center justify-between rounded-xl border border-white/[0.07] bg-black/20 px-4 py-4">
+                      <div className="mt-3 grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
+                        {supportedAssets.map(
+                          (asset) => {
+                            const selected =
+                              asset.ticker ===
+                              selectedTicker;
+
+                            return (
+                              <button
+                                key={asset.ticker}
+                                type="button"
+                                onClick={() =>
+                                  setSelectedTicker(
+                                    asset.ticker as PythEquityTicker
+                                  )
+                                }
+                                className={`rounded-xl border p-4 text-left transition ${
+                                  selected
+                                    ? "border-emerald-400/30 bg-emerald-400/[0.08]"
+                                    : "border-white/[0.07] bg-black/20 hover:bg-white/[0.03]"
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="font-medium text-zinc-200">
+                                    {asset.ticker}
+                                  </p>
+
+                                  <span
+                                    className={`h-2.5 w-2.5 rounded-full border ${
+                                      selected
+                                        ? "border-emerald-300 bg-emerald-400"
+                                        : "border-zinc-600"
+                                    }`}
+                                  />
+                                </div>
+
+                                <p className="mt-2 text-xs leading-5 text-zinc-600">
+                                  {asset.name}
+                                </p>
+                              </button>
+                            );
+                          }
+                        )}
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between rounded-xl border border-white/[0.07] bg-black/20 px-4 py-3">
                         <div>
-                          <p className="font-medium">
-                            TSLA
+                          <p className="text-xs uppercase tracking-[0.14em] text-zinc-600">
+                            Selected Pyth feed
                           </p>
 
-                          <p className="mt-1 text-xs text-zinc-600">
-                            Tesla, Inc.
+                          <p className="mt-1 text-sm text-zinc-300">
+                            {selectedAsset.symbol}
                           </p>
                         </div>
 
@@ -457,7 +527,7 @@ export default function CreateMarketPage() {
                       </p>
 
                       <h2 className="mt-3 text-2xl font-medium">
-                        StockForge market
+                        {selectedTicker} market
                         design
                       </h2>
                     </div>
@@ -648,7 +718,7 @@ export default function CreateMarketPage() {
                         </button>
 
                       <p className="mt-3 text-center text-[11px] text-zinc-700">
-                        StockForge target
+                        Asset-specific StockForge
                         profile — Meteora DBC
                         compilation comes next.
                       </p>
